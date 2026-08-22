@@ -54,7 +54,8 @@ def test_paddle_adapter_reuses_engine_and_parses_v3_result() -> None:
     )
 
     first = service.recognize(_jpeg())
-    second = service.recognize(_jpeg(), previous_reading=Decimal("100"))
+    prepared = ImagePreprocessor(PreprocessingConfig(max_dimension=1000)).process(_jpeg())
+    second = service.recognize_image(prepared, previous_reading=Decimal("100"))
 
     assert first.reading == Decimal("123.4")
     assert first.serial_number == "99887766"

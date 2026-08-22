@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -46,7 +47,88 @@ def result_payload(result: OCRResult) -> dict[str, object]:
     }
 
 
-def recognize_sample(settings: Settings, sample_dir: Path) -> OCRResult:
+@dataclass(frozen=True, slots=True)
+class OCRVariant:
+    name: str
+    config: PreprocessingConfig
+
+
+def preprocessing_variants(settings: Settings) -> list[OCRVariant]:
+    max_dimension = settings.ocr_image_max_dimension
+    perspective = settings.ocr_perspective_correction
+    candidates = [
+        OCRVariant(
+            "configured",
+            PreprocessingConfig(
+                max_dimension=max_dimension,
+                grayscale=settings.ocr_grayscale,
+                enhance_contrast=settings.ocr_enhance_contrast,
+                threshold=settings.ocr_threshold,
+                perspective_correction=perspective,
+            ),
+        ),
+        OCRVariant(
+            "color",
+            PreprocessingConfig(
+                max_dimension=max_dimension,
+                grayscale=False,
+                enhance_contrast=False,
+                threshold=False,
+                perspective_correction=perspective,
+            ),
+        ),
+        OCRVariant(
+            "grayscale",
+            PreprocessingConfig(
+                max_dimension=max_dimension,
+                grayscale=True,
+                enhance_contrast=False,
+                threshold=False,
+                perspective_correction=perspective,
+            ),
+        ),
+        OCRVariant(
+            "grayscale_contrast",
+            PreprocessingConfig(
+                max_dimension=max_dimension,
+                grayscale=True,
+                enhance_contrast=True,
+                threshold=False,
+                perspective_correction=perspective,
+            ),
+        ),
+        OCRVariant(
+            "grayscale_threshold",
+            PreprocessingConfig(
+                max_dimension=max_dimension,
+                grayscale=True,
+                enhance_contrast=False,
+                threshold=True,
+                perspective_correction=perspective,
+            ),
+        ),
+        OCRVariant(
+            "grayscale_contrast_threshold",
+            PreprocessingConfig(
+                max_dimension=max_dimension,
+                grayscale=True,
+                enhance_contrast=True,
+                threshold=True,
+                perspective_correction=perspective,
+            ),
+        ),
+    ]
+    unique: list[OCRVariant] = []
+    seen: set[PreprocessingConfig] = set()
+    for variant in candidates:
+        if variant.config in seen:
+            continue
+        seen.add(variant.config)
+        unique.append(variant)
+    return unique
+
+
+def recognize_sample(settings: Settings, sample_dir: Path) -> list[dict[str, object]]:
     image_content = (sample_dir / "original.jpg").read_bytes()
     ocr = PaddleOCRService(
         preprocessor=ImagePreprocessor(
@@ -62,7 +144,19 @@ def recognize_sample(settings: Settings, sample_dir: Path) -> OCRResult:
         language=settings.ocr_language,
         cpu_threads=settings.ocr_cpu_threads,
     )
-    return ocr.recognize(image_content)
+    results: list[dict[str, object]] = []
+    for variant in preprocessing_variants(settings):
+        image = ImagePreprocessor(variant.config).process(image_content)
+        result = ocr.recognize_image(image)
+        results.append(
+            {
+                "variant": variant.name,
+                "preprocessing": asdict(variant.config),
+                "image_shape": list(image.shape),
+                "result": result_payload(result),
+            }
+        )
+    return results
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -85,7 +179,7 @@ def main() -> None:
     try:
         sample_dir = find_sample(settings.ocr_debug_dir, arguments.sample_id)
         metadata = load_metadata(sample_dir)
-        rerun_result = recognize_sample(settings, sample_dir)
+        variant_results = recognize_sample(settings, sample_dir)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
         return
@@ -97,7 +191,7 @@ def main() -> None:
                 "goal": metadata.get("goal"),
                 "captured_at": metadata.get("captured_at"),
                 "saved_result": metadata.get("current_result"),
-                "rerun_result": result_payload(rerun_result),
+                "variant_results": variant_results,
             },
             ensure_ascii=False,
             indent=2,

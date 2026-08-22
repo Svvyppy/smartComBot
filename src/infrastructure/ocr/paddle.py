@@ -61,6 +61,21 @@ class PaddleOCRService:
         max_delta: Decimal | None = None,
     ) -> OCRResult:
         image = self._preprocessor.process(image_content)
+        return self.recognize_image(
+            image,
+            previous_reading=previous_reading,
+            max_delta=max_delta,
+        )
+
+    def recognize_image(
+        self,
+        image: ImageArray,
+        *,
+        previous_reading: Decimal | None = None,
+        max_delta: Decimal | None = None,
+    ) -> OCRResult:
+        """Recognize an already prepared image while reusing the loaded OCR engine."""
+
         pages = self._get_engine().predict(image)
         lines: list[OCRTextLine] = []
         for page in pages:
