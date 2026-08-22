@@ -19,36 +19,41 @@ from src.domain.entities import User
 logger = logging.getLogger(__name__)
 
 
-def _capture_summary(capture: OCRDebugCapture) -> str:
-    lines = ["Первичная попытка OCR завершена."]
+def _received_summary(capture: OCRDebugCapture) -> str:
+    lines: list[str] = []
     result = capture.current_result
     if result is None:
-        lines.append("Кандидат показания: не найден")
+        lines.append("• результат: не получен")
     else:
         reading = "не найден" if result.reading is None else format_decimal(result.reading)
         lines.extend(
             [
-                f"Кандидат показания: {reading}",
-                f"Уверенность: {result.confidence * 100:.0f}%",
+                f"• показание: {reading}",
+                f"• уверенность: {result.confidence * 100:.0f}%",
             ]
         )
         if result.serial_number:
-            lines.append(f"Кандидат серийного номера: {result.serial_number}")
+            lines.append(f"• серийный номер: {result.serial_number}")
         if result.raw_text:
             raw_text = " | ".join(result.raw_text)
             if len(raw_text) > 600:
                 raw_text = f"{raw_text[:597]}…"
-            lines.append(f"Сырой текст: {raw_text}")
+            lines.append(f"• сырой текст: {raw_text}")
     if capture.error:
-        lines.append("Во время OCR возникла ошибка; подробности сохранены в образце.")
-    lines.extend(
-        [
-            "",
-            "Теперь напишите, что именно должно быть распознано на этом фото.",
-            "Например: показание 00123.4 и серийный номер 998877",
-        ]
-    )
+        error = capture.error if len(capture.error) <= 700 else f"{capture.error[:697]}…"
+        lines.append(f"• ошибка: {error}")
     return "\n".join(lines)
+
+
+def _capture_summary(capture: OCRDebugCapture) -> str:
+    return (
+        "Первичная попытка OCR завершена.\n\n"
+        f"Получено OCR:\n{_received_summary(capture)}\n\n"
+        "Ожидается:\n• пока не указано\n\n"
+        "Теперь напишите, что именно должно быть распознано на этом фото. "
+        "Можно указать несколько значений.\n"
+        "Например: T1=00123.4, T2=00456.7, T3=00890.1"
+    )
 
 
 def create_ocr_debug_router(
@@ -118,7 +123,10 @@ def create_ocr_debug_router(
             )
             return
 
-        await state.update_data(ocr_debug_sample_id=str(capture.sample_id))
+        await state.update_data(
+            ocr_debug_sample_id=str(capture.sample_id),
+            ocr_debug_received=_received_summary(capture),
+        )
         await state.set_state(OCRDebugForm.goal)
         await message.answer(_capture_summary(capture), reply_markup=cancel_keyboard())
 
@@ -165,8 +173,12 @@ def create_ocr_debug_router(
             current_user.telegram_id,
             sample_id,
         )
+        received = str(data.get("ocr_debug_received", "• результат недоступен"))
+        expected = message.text.strip()
         await message.answer(
             "Отладочный образец готов.\n\n"
+            f"Получено OCR:\n{received}\n\n"
+            f"Ожидается:\n{expected}\n\n"
             f"ID: {sample_id}\n"
             "Напишите в рабочем чате: «образец готов» — я найду его и начну "
             "настраивать распознавание.",

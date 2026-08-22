@@ -14,7 +14,7 @@ from aiogram.types import User as TelegramUser
 
 from src.application.interfaces import OCRResult
 from src.application.ocr import OCRDebugCapture
-from src.bot.handlers.ocr_debug import create_ocr_debug_router
+from src.bot.handlers.ocr_debug import _capture_summary, create_ocr_debug_router
 from src.bot.middlewares import CurrentUserMiddleware
 from src.domain.entities import User
 
@@ -136,6 +136,20 @@ def incoming_photo(update_id: int) -> Update:
     )
 
 
+def test_ocr_debug_summary_shows_received_error_and_pending_expectation() -> None:
+    summary = _capture_summary(
+        OCRDebugCapture(
+            sample_id=SAMPLE_ID,
+            current_result=None,
+            error="ValueError: not enough values to unpack (expected 3, got 2)",
+        )
+    )
+
+    assert "Получено OCR:" in summary
+    assert "expected 3, got 2" in summary
+    assert "Ожидается:\n• пока не указано" in summary
+
+
 async def test_ocr_debug_photo_and_goal_flow() -> None:
     service = FakeOCRDebugService()
     session = RecordingSession()
@@ -161,5 +175,9 @@ async def test_ocr_debug_photo_and_goal_flow() -> None:
 
     assert service.image_content == b"jpeg-data"
     assert service.goal == "Показание 123.4, номер 998877"
-    assert any("Кандидат показания: 123.4" in text for text in session.sent_texts)
+    assert any("Получено OCR:\n• показание: 123.4" in text for text in session.sent_texts)
+    assert any("Ожидается:\n• пока не указано" in text for text in session.sent_texts)
+    assert any(
+        "Ожидается:\nПоказание 123.4, номер 998877" in text for text in session.sent_texts
+    )
     assert any(str(SAMPLE_ID) in text for text in session.sent_texts)
