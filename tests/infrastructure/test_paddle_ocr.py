@@ -34,11 +34,60 @@ class FakeEngine:
     def __init__(self) -> None:
         self.predict_calls = 0
 
-    def predict(self, input_image: ImageArray) -> Iterable[object]:
+    def predict(self, input_image: ImageArray, **_: object) -> Iterable[object]:
         self.predict_calls += 1
         assert input_image.ndim == 3
         assert input_image.shape[2] == 3
         return [FakePage()]
+
+
+class FakeMechanicalPage:
+    def __init__(self, counter_text: str, serial_text: str) -> None:
+        self.json = {
+            "res": {
+                "rec_texts": [counter_text, serial_text, "K=1,4815×10 m/мин."],
+                "rec_scores": [0.78, 0.97, 0.95],
+                "rec_polys": [
+                    [[100, 100], [900, 100], [900, 200], [100, 200]],
+                    [[100, 250], [500, 250], [500, 300], [100, 300]],
+                    [[100, 350], [500, 350], [500, 400], [100, 400]],
+                ],
+            }
+        }
+
+
+class FakeMechanicalEngine:
+    def __init__(self, counter_text: str, serial_text: str) -> None:
+        self._page = FakeMechanicalPage(counter_text, serial_text)
+
+    def predict(self, input_image: ImageArray, **kwargs: object) -> Iterable[object]:
+        assert input_image.shape == (500, 1000, 3)
+        assert kwargs["text_det_unclip_ratio"] == 1.2
+        return [self._page]
+
+
+class FakeRecognitionResult:
+    def __init__(self, text: str, score: float) -> None:
+        self.json = {"res": {"rec_text": text, "rec_score": score}}
+
+
+class FakeCounterRecognizer:
+    def __init__(self, direct_text: str, direct_score: float, last_text: str, last_score: float):
+        self._results = [
+            FakeRecognitionResult(direct_text, direct_score),
+            FakeRecognitionResult(last_text, last_score),
+        ]
+
+    def predict(
+        self,
+        input_image: list[ImageArray],
+        *,
+        batch_size: int = 1,
+    ) -> Iterable[object]:
+        assert len(input_image) == 2
+        assert all(image.ndim == 3 for image in input_image)
+        assert batch_size == 1
+        return self._results
 
 
 def test_paddle_adapter_reuses_engine_and_parses_v3_result() -> None:
@@ -81,3 +130,68 @@ def test_paddle_adapter_reports_received_and_expected_image_shape() -> None:
         match=r"expects an image shaped height × width × 3 channels; received 10",
     ):
         service.recognize_image(invalid)
+
+
+@pytest.mark.parametrize(
+    (
+        "generic_text",
+        "serial_text",
+        "direct_text",
+        "direct_score",
+        "last_text",
+        "last_score",
+        "expected_reading",
+        "expected_serial",
+    ),
+    [
+        (
+            "00127:042",
+            "N164701553",
+            "0012704",
+            0.83,
+            "4",
+            0.61,
+            Decimal("127.044"),
+            "N164701553",
+        ),
+        (
+            "60420.370",
+            "OB 8980478 13",
+            "00420371",
+            0.94,
+            "1U",
+            0.26,
+            Decimal("420.371"),
+            "OB 898047813",
+        ),
+    ],
+)
+def test_paddle_adapter_recovers_eight_wheel_counter_reading(
+    generic_text: str,
+    serial_text: str,
+    direct_text: str,
+    direct_score: float,
+    last_text: str,
+    last_score: float,
+    expected_reading: Decimal,
+    expected_serial: str,
+) -> None:
+    recognizer_calls: list[dict[str, object]] = []
+
+    def recognizer_factory(**options: object) -> FakeCounterRecognizer:
+        recognizer_calls.append(options)
+        return FakeCounterRecognizer(direct_text, direct_score, last_text, last_score)
+
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: FakeMechanicalEngine(generic_text, serial_text),
+        counter_recognizer_factory=recognizer_factory,
+    )
+
+    result = service.recognize(_jpeg())
+
+    assert result.reading == expected_reading
+    assert result.serial_number == expected_serial
+    assert len(recognizer_calls) == 1
+    assert recognizer_calls[0]["model_name"] == "en_PP-OCRv5_mobile_rec"

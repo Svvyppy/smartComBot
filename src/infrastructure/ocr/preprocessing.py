@@ -27,6 +27,12 @@ class ImagePreprocessor:
         self._config = config or PreprocessingConfig()
 
     def process(self, image_content: bytes) -> ImageArray:
+        _, processed = self.process_with_color(image_content)
+        return processed
+
+    def process_with_color(self, image_content: bytes) -> tuple[ImageArray, ImageArray]:
+        """Return geometry-aligned color and configured variants of the image."""
+
         if not image_content:
             raise ValueError("Image is empty")
         encoded = np.frombuffer(image_content, dtype=np.uint8)
@@ -38,13 +44,14 @@ class ImagePreprocessor:
         if self._config.perspective_correction:
             image = self._correct_perspective(image)
         image = self._resize(image)
+        color_image = image
         if self._config.grayscale:
             image = np.asarray(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), dtype=np.uint8)
         if self._config.enhance_contrast:
             image = self._enhance_contrast(image)
         if self._config.threshold:
             image = self._apply_threshold(image)
-        return image
+        return color_image, image
 
     def _resize(self, image: ImageArray) -> ImageArray:
         height, width = image.shape[:2]
