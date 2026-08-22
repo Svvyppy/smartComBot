@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - paddle_models:/models/paddle
+
+volumes:
+  paddle_models:
+
