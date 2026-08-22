@@ -147,7 +147,11 @@ def recognize_sample(settings: Settings, sample_dir: Path) -> list[dict[str, obj
     results: list[dict[str, object]] = []
     for variant in preprocessing_variants(settings):
         image = ImagePreprocessor(variant.config).process(image_content)
-        result = ocr.recognize_image(image)
+        result = (
+            ocr.recognize(image_content)
+            if variant.name == "configured"
+            else ocr.recognize_image(image)
+        )
         results.append(
             {
                 "variant": variant.name,
