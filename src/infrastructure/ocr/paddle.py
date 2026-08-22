@@ -31,19 +31,27 @@ class PaddleOCRService:
     ) -> None:
         if cpu_threads < 1:
             raise ValueError("cpu_threads must be positive")
-        factory = engine_factory or self._create_engine
-        self._engine = factory(
-            lang=language,
-            device="cpu",
-            cpu_threads=cpu_threads,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            text_detection_model_name="PP-OCRv5_mobile_det",
-            text_recognition_model_name="PP-OCRv5_mobile_rec",
-        )
+        self._engine_factory = engine_factory or self._create_engine
+        self._engine_options: dict[str, object] = {
+            "lang": language,
+            "device": "cpu",
+            "cpu_threads": cpu_threads,
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": False,
+            "text_detection_model_name": "PP-OCRv5_mobile_det",
+            "text_recognition_model_name": "PP-OCRv5_mobile_rec",
+        }
+        self._engine: PaddleEngine | None = None
         self._preprocessor = preprocessor
         self._parser = parser
+
+    def _get_engine(self) -> PaddleEngine:
+        if self._engine is None:
+            self._engine = self._engine_factory(
+                **self._engine_options,
+            )
+        return self._engine
 
     def recognize(
         self,
@@ -53,7 +61,7 @@ class PaddleOCRService:
         max_delta: Decimal | None = None,
     ) -> OCRResult:
         image = self._preprocessor.process(image_content)
-        pages = self._engine.predict(image)
+        pages = self._get_engine().predict(image)
         lines: list[OCRTextLine] = []
         for page in pages:
             lines.extend(self._extract_page_lines(page))

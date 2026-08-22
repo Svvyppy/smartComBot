@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.domain.enums import UtilityType
@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     cold_water_max_monthly_delta: Decimal = Decimal("100")
     hot_water_max_monthly_delta: Decimal = Decimal("100")
     electricity_max_monthly_delta: Decimal = Decimal("3000")
+
+    ocr_language: str = "en"
+    ocr_cpu_threads: int = Field(default=2, ge=1, le=8)
+    ocr_max_concurrency: int = Field(default=1, ge=1, le=4)
+    ocr_max_image_bytes: int = Field(default=10_000_000, ge=100_000, le=20_000_000)
+    ocr_image_max_dimension: int = Field(default=1600, ge=320, le=4096)
+    ocr_grayscale: bool = True
+    ocr_enhance_contrast: bool = True
+    ocr_threshold: bool = False
+    ocr_perspective_correction: bool = False
 
     @property
     def reading_delta_limits(self) -> dict[UtilityType, Decimal]:
