@@ -15,6 +15,11 @@ class MeterCallback(CallbackData, prefix="m"):
     meter_id: str
 
 
+class ReadingCallback(CallbackData, prefix="r"):
+    action: str
+    reading_id: str
+
+
 class UtilityCallback(CallbackData, prefix="u"):
     action: str
     utility_type: str
@@ -23,4 +28,3 @@ class UtilityCallback(CallbackData, prefix="u"):
 class TariffCallback(CallbackData, prefix="t"):
     property_id: str
     utility_type: str
-

@@ -26,7 +26,9 @@ async def run() -> None:
     user_middleware = CurrentUserMiddleware(services.users)
     dispatcher.message.outer_middleware(user_middleware)
     dispatcher.callback_query.outer_middleware(user_middleware)
-    dispatcher.include_router(create_bot_router(services))
+    dispatcher.include_router(
+        create_bot_router(services, max_photo_bytes=settings.ocr_max_image_bytes)
+    )
 
     logger.info("Starting utility bot with long polling")
     async with Bot(token=settings.bot_token.get_secret_value()) as bot:

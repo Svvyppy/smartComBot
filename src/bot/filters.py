@@ -11,3 +11,7 @@ class TextEquals(Filter):
     async def __call__(self, message: Message) -> bool:
         return message.text == self._text
 
+
+class HasPhoto(Filter):
+    async def __call__(self, message: Message) -> bool:
+        return bool(message.photo)

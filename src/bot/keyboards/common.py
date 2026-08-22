@@ -12,6 +12,7 @@ from src.bot.keyboards.callbacks import (
     ActionCallback,
     MeterCallback,
     PropertyCallback,
+    ReadingCallback,
     TariffCallback,
     UtilityCallback,
 )
@@ -195,3 +196,61 @@ def suspicious_reading_keyboard(meter_id: str) -> InlineKeyboardMarkup:
         ]
     )
 
+
+def reading_method_keyboard(meter_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📷 Отправить фото",
+                    callback_data=MeterCallback(action="photo", meter_id=meter_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⌨️ Ввести вручную",
+                    callback_data=MeterCallback(action="manual", meter_id=meter_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=ActionCallback(action="cancel").pack(),
+                )
+            ],
+        ]
+    )
+
+
+def photo_confirmation_keyboard(reading_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить",
+                    callback_data=ReadingCallback(
+                        action="confirm",
+                        reading_id=reading_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Исправить",
+                    callback_data=ReadingCallback(
+                        action="correct",
+                        reading_id=reading_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=ReadingCallback(
+                        action="reject",
+                        reading_id=reading_id,
+                    ).pack(),
+                )
+            ],
+        ]
+    )

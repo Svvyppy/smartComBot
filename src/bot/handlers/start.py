@@ -10,7 +10,7 @@ from src.bot.texts import MenuButton
 from src.domain.entities import User
 
 HELP_TEXT = (
-    "Я помогу вести объекты, счётчики, тарифы и ручные показания.\n\n"
+    "Я помогу вести объекты, счётчики, тарифы и распознавать показания по фото.\n\n"
     "Доступные команды:\n"
     "/properties — объекты\n"
     "/meters — счётчики\n"

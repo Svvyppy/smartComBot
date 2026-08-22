@@ -17,6 +17,9 @@ class TariffForm(StatesGroup):
 
 
 class ReadingForm(StatesGroup):
+    method = State()
+    photo = State()
+    photo_confirmation = State()
+    photo_correction = State()
     value = State()
     suspicious_confirmation = State()
-

@@ -9,7 +9,11 @@ from src.bot.handlers.start import create_start_router
 from src.bot.handlers.tariffs import create_tariffs_router
 
 
-def create_bot_router(services: ApplicationServices) -> Router:
+def create_bot_router(
+    services: ApplicationServices,
+    *,
+    max_photo_bytes: int = 10_000_000,
+) -> Router:
     router = Router(name="utility_bot")
     router.include_router(create_start_router())
     router.include_router(create_properties_router(services.properties))
@@ -20,6 +24,8 @@ def create_bot_router(services: ApplicationServices) -> Router:
             services.properties,
             services.meters,
             services.readings,
+            services.photo_readings,
+            max_photo_bytes=max_photo_bytes,
         )
     )
     router.include_router(create_errors_router())
@@ -27,4 +33,3 @@ def create_bot_router(services: ApplicationServices) -> Router:
 
 
 __all__ = ["create_bot_router"]
-
