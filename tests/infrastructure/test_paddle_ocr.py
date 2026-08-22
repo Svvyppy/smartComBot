@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import cv2
 import numpy as np
+import pytest
 
 from src.infrastructure.ocr import (
     ImagePreprocessor,
@@ -35,7 +36,8 @@ class FakeEngine:
 
     def predict(self, input_image: ImageArray) -> Iterable[object]:
         self.predict_calls += 1
-        assert input_image.ndim == 2
+        assert input_image.ndim == 3
+        assert input_image.shape[2] == 3
         return [FakePage()]
 
 
@@ -64,3 +66,18 @@ def test_paddle_adapter_reuses_engine_and_parses_v3_result() -> None:
     assert len(factory_calls) == 1
     assert factory_calls[0]["device"] == "cpu"
     assert factory_calls[0]["text_detection_model_name"] == "PP-OCRv5_mobile_det"
+
+
+def test_paddle_adapter_reports_received_and_expected_image_shape() -> None:
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: FakeEngine(),
+    )
+
+    invalid = np.zeros((10,), dtype=np.uint8)
+    with pytest.raises(
+        ValueError,
+        match=r"expects an image shaped height × width × 3 channels; received 10",
+    ):
+        service.recognize_image(invalid)

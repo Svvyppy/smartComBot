@@ -5,6 +5,9 @@ from collections.abc import Callable, Iterable, Mapping
 from decimal import Decimal
 from typing import Any, Protocol, cast
 
+import cv2
+import numpy as np
+
 from src.application.interfaces import OCRResult, OCRTextLine
 from src.infrastructure.ocr.parser import MeterReadingParser
 from src.infrastructure.ocr.preprocessing import ImageArray, ImagePreprocessor
@@ -76,7 +79,8 @@ class PaddleOCRService:
     ) -> OCRResult:
         """Recognize an already prepared image while reusing the loaded OCR engine."""
 
-        pages = self._get_engine().predict(image)
+        engine_image = self._ensure_three_channels(image)
+        pages = self._get_engine().predict(engine_image)
         lines: list[OCRTextLine] = []
         for page in pages:
             lines.extend(self._extract_page_lines(page))
@@ -84,6 +88,24 @@ class PaddleOCRService:
             lines,
             previous_reading=previous_reading,
             max_delta=max_delta,
+        )
+
+    @staticmethod
+    def _ensure_three_channels(image: ImageArray) -> ImageArray:
+        """Convert supported OpenCV images to PaddleOCR's H×W×3 input contract."""
+
+        if image.ndim == 2:
+            return np.asarray(cv2.cvtColor(image, cv2.COLOR_GRAY2BGR), dtype=np.uint8)
+        if image.ndim == 3 and image.shape[2] == 1:
+            return np.asarray(cv2.cvtColor(image, cv2.COLOR_GRAY2BGR), dtype=np.uint8)
+        if image.ndim == 3 and image.shape[2] == 4:
+            return np.asarray(cv2.cvtColor(image, cv2.COLOR_BGRA2BGR), dtype=np.uint8)
+        if image.ndim == 3 and image.shape[2] == 3:
+            return image
+        received = " × ".join(str(dimension) for dimension in image.shape)
+        raise ValueError(
+            "PaddleOCR expects an image shaped height × width × 3 channels; "
+            f"received {received or 'no dimensions'}"
         )
 
     @staticmethod
