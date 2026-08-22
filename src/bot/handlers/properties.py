@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from aiogram import F, Router
@@ -18,6 +19,8 @@ from src.bot.keyboards.common import (
 from src.bot.states import PropertyForm
 from src.bot.texts import MenuButton
 from src.domain.entities import User
+
+logger = logging.getLogger(__name__)
 
 
 def create_properties_router(properties: PropertyService) -> Router:
@@ -108,6 +111,11 @@ def create_properties_router(properties: PropertyService) -> Router:
             user_id=current_user.id,
             name=name,
             address=address,
+        )
+        logger.info(
+            "Property created telegram_id=%s property_id=%s",
+            current_user.telegram_id,
+            property_.id,
         )
         await state.clear()
         await message.answer(

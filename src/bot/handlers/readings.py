@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from uuid import UUID
 
@@ -27,6 +28,8 @@ from src.bot.presentation import format_decimal, format_money, parse_decimal
 from src.bot.states import ReadingForm
 from src.bot.texts import MenuButton, unit_label, utility_label
 from src.domain.entities import Meter, User
+
+logger = logging.getLogger(__name__)
 
 
 def create_readings_router(
@@ -207,6 +210,12 @@ def create_readings_router(
             await state.clear()
             return
         await state.clear()
+        logger.info(
+            "Manual reading saved telegram_id=%s meter_id=%s reading_id=%s",
+            current_user.telegram_id,
+            meter_id,
+            result.reading.id,
+        )
         await message.answer(result_text(meter, result), reply_markup=main_menu_keyboard())
 
     @router.message(StateFilter(ReadingForm.value))

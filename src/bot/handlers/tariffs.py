@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -18,6 +19,9 @@ from src.bot.states import TariffForm
 from src.bot.texts import MenuButton, utility_label
 from src.domain.entities import User
 from src.domain.enums import UtilityType
+
+logger = logging.getLogger(__name__)
+
 
 DISPLAYED_UTILITY_TYPES = (
     UtilityType.COLD_WATER,
@@ -144,6 +148,12 @@ def create_tariffs_router(properties: PropertyService, tariffs: TariffService) -
             name=f"{utility_label(utility_type)} от {today.isoformat()}",
             price=price,
             valid_from=today,
+        )
+        logger.info(
+            "Tariff created telegram_id=%s property_id=%s type=%s",
+            current_user.telegram_id,
+            property_id,
+            utility_type.value,
         )
         await state.clear()
         await message.answer(

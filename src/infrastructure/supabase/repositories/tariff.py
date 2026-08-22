@@ -71,6 +71,7 @@ class SupabaseTariffRepository(SupabaseRepository):
             .lte("valid_from", iso_date)
             .or_(f"valid_to.is.null,valid_to.gte.{iso_date}")
             .order("valid_from", desc=True)
+            .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
@@ -101,4 +102,3 @@ class SupabaseTariffRepository(SupabaseRepository):
         )
         if self._first(response) is None:
             raise AccessDeniedError("Tariff plan does not belong to the current user")
-

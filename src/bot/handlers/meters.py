@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from aiogram import F, Router
@@ -26,6 +27,8 @@ from src.bot.states import MeterForm
 from src.bot.texts import MenuButton, unit_label, utility_label
 from src.domain.entities import User
 from src.domain.enums import MeterUnit, UtilityType
+
+logger = logging.getLogger(__name__)
 
 
 def create_meters_router(properties: PropertyService, meters: MeterService) -> Router:
@@ -209,6 +212,12 @@ def create_meters_router(properties: PropertyService, meters: MeterService) -> R
             utility_type=utility_type,
             unit=unit,
             serial_number=serial_number,
+        )
+        logger.info(
+            "Meter created telegram_id=%s meter_id=%s type=%s",
+            current_user.telegram_id,
+            meter.id,
+            meter.type.value,
         )
         await state.clear()
         await message.answer(
