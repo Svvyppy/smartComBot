@@ -12,8 +12,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libgomp1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 appuser \
-    && mkdir -p /models/paddle \
-    && chown -R appuser:appuser /models
+    && mkdir -p /models/paddle /data/ocr-debug \
+    && chown -R appuser:appuser /models /data
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install \

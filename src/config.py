@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +40,7 @@ class Settings(BaseSettings):
     ocr_enhance_contrast: bool = True
     ocr_threshold: bool = False
     ocr_perspective_correction: bool = False
+    ocr_debug_dir: Path = Path("/data/ocr-debug")
 
     @property
     def reading_delta_limits(self) -> dict[UtilityType, Decimal]:

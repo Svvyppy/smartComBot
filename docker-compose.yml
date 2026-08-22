@@ -6,7 +6,8 @@ services:
       - .env
     volumes:
       - paddle_models:/models/paddle
+      - ocr_debug:/data/ocr-debug
 
 volumes:
   paddle_models:
-
+  ocr_debug:

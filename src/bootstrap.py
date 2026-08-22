@@ -1,13 +1,14 @@
 from dataclasses import dataclass
 
 from src.application.meters import MeterService
-from src.application.ocr import OCRExecutor
+from src.application.ocr import OCRDebugService, OCRExecutor
 from src.application.properties import PropertyService
 from src.application.readings import PhotoReadingService, ReadingService
 from src.application.tariffs import TariffService
 from src.application.users import UserService
 from src.config import Settings
 from src.domain.services import BillingService, ReadingValidationService
+from src.infrastructure.local import LocalOCRDebugSampleStore
 from src.infrastructure.ocr import (
     ImagePreprocessor,
     MeterReadingParser,
@@ -35,6 +36,7 @@ class ApplicationServices:
     tariffs: TariffService
     readings: ReadingService
     photo_readings: PhotoReadingService
+    ocr_debug: OCRDebugService
 
 
 def build_application(settings: Settings) -> ApplicationServices:
@@ -70,6 +72,7 @@ def build_application(settings: Settings) -> ApplicationServices:
         language=settings.ocr_language,
         cpu_threads=settings.ocr_cpu_threads,
     )
+    ocr_executor = OCRExecutor(ocr, max_concurrency=settings.ocr_max_concurrency)
     photo_readings = PhotoReadingService(
         meters=meter_repository,
         readings=reading_repository,
@@ -77,8 +80,12 @@ def build_application(settings: Settings) -> ApplicationServices:
         tariffs=tariffs,
         billing=billing,
         validation=validation,
-        ocr=OCRExecutor(ocr, max_concurrency=settings.ocr_max_concurrency),
+        ocr=ocr_executor,
         storage=SupabaseImageStorage(client, settings.supabase_storage_bucket),
+    )
+    ocr_debug = OCRDebugService(
+        ocr=ocr_executor,
+        samples=LocalOCRDebugSampleStore(settings.ocr_debug_dir),
     )
     return ApplicationServices(
         users=users,
@@ -87,4 +94,5 @@ def build_application(settings: Settings) -> ApplicationServices:
         tariffs=tariffs,
         readings=readings,
         photo_readings=photo_readings,
+        ocr_debug=ocr_debug,
     )
