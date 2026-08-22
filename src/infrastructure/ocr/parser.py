@@ -16,12 +16,21 @@ _SERIAL_PATTERN = re.compile(
     r"(?:s\s*/?\s*n|serial|сер(?:ия|ийный)?|номер|№)\s*[:#№-]?\s*([A-ZА-Я0-9-]{5,20})",
     re.IGNORECASE,
 )
+_PREFIXED_SERIAL_PATTERN = re.compile(
+    r"(?<![A-ZА-Я0-9])(?P<prefix>N[°º]?|OB|ОВ)\s*[:#№-]?\s*"
+    r"(?P<number>\d(?:[ -]?\d){5,19})(?!\d)",
+    re.IGNORECASE,
+)
 _SERIAL_MARKER = re.compile(r"(?:s\s*/?\s*n|serial|сер(?:ия|ийный)?|номер|№)", re.I)
 _ELECTRICAL_NOISE = re.compile(
     r"(?:\b\d+(?:[.,]\d+)?\s*(?:v|a|hz|в|а|гц)\b|\d+\s*[-–]\s*\d+\s*a\b)",
     re.I,
 )
 _METER_UNIT = re.compile(r"(?:m[³3]|м[³3]|kwh|квт)", re.I)
+_TECHNICAL_COEFFICIENT = re.compile(
+    r"(?:^\s*[×x]\s*\d|(?:^|\s)k\s*=|\b(?:q[nm]|tmax|pmax)\b|имп\s*[.=])",
+    re.I,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +109,8 @@ class MeterReadingParser:
             score -= 20
         if _ELECTRICAL_NOISE.search(line.text):
             score -= 12
+        if _TECHNICAL_COEFFICIENT.search(line.text):
+            score -= 20
 
         if previous_reading is not None:
             delta = value - previous_reading
@@ -118,6 +129,12 @@ class MeterReadingParser:
     def _extract_serial(lines: Sequence[OCRTextLine]) -> str | None:
         matches: list[tuple[float, str]] = []
         for line in lines:
+            prefixed = _PREFIXED_SERIAL_PATTERN.search(line.text)
+            if prefixed is not None:
+                prefix = prefixed.group("prefix").upper()
+                number = re.sub(r"[ -]", "", prefixed.group("number"))
+                normalized = f"N{number}" if prefix.startswith("N") else f"OB {number}"
+                matches.append((line.confidence, normalized))
             match = _SERIAL_PATTERN.search(line.text)
             if match is not None:
                 matches.append((line.confidence, match.group(1).upper()))

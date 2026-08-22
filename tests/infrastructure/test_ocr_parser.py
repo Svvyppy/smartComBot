@@ -40,3 +40,23 @@ def test_parser_returns_none_when_no_meter_shaped_number_exists() -> None:
     assert result.reading is None
     assert result.confidence == 0.0
     assert result.raw_text == ["Модель 201", "230V"]
+
+
+def test_parser_prefers_counter_line_over_technical_coefficients() -> None:
+    result = MeterReadingParser().parse(
+        [
+            OCRTextLine("60420.370", 0.70),
+            OCRTextLine("K=1,4815×10 m/мин.", 0.95),
+            OCRTextLine("×0,000", 0.99),
+        ]
+    )
+
+    assert result.reading == Decimal("60420.370")
+
+
+def test_parser_extracts_serial_prefixes_seen_on_real_water_meters() -> None:
+    first = MeterReadingParser().parse([OCRTextLine("N164701553", 0.96)])
+    second = MeterReadingParser().parse([OCRTextLine("OB 8980478 13", 0.97)])
+
+    assert first.serial_number == "N164701553"
+    assert second.serial_number == "OB 898047813"
