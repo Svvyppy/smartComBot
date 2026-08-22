@@ -3,7 +3,8 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PADDLE_PDX_CACHE_HOME=/models/paddle
+    PADDLE_PDX_CACHE_HOME=/models/paddle \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 
 WORKDIR /app
 
@@ -14,13 +15,19 @@ RUN apt-get update \
     && mkdir -p /models/paddle \
     && chown -R appuser:appuser /models
 
-COPY pyproject.toml ./
-COPY src ./src
 RUN python -m pip install --upgrade pip \
     && python -m pip install \
         --index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
-        paddlepaddle==3.0.0 \
-    && python -m pip install '.[ocr]'
+        paddlepaddle==3.0.0
+
+COPY pyproject.toml ./
+RUN mkdir -p src \
+    && touch src/__init__.py \
+    && python -m pip install '.[ocr]' \
+    && rm -rf src utility_meter_bot.egg-info
+
+COPY src ./src
+RUN python -m pip install --no-deps .
 
 USER appuser
 
