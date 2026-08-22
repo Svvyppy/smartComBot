@@ -1,4 +1,5 @@
 from src.application.interfaces.manual_reading import ManualReadingPersistence
+from src.application.interfaces.ocr import OCRResult, OCRTextLine, SynchronousOCR
 from src.application.interfaces.repositories import (
     BillingRepository,
     MeterRepository,
@@ -14,8 +15,11 @@ __all__ = [
     "ImageStorage",
     "ManualReadingPersistence",
     "MeterRepository",
+    "OCRResult",
+    "OCRTextLine",
     "PropertyRepository",
     "ReadingRepository",
+    "SynchronousOCR",
     "TariffRepository",
     "UserRepository",
 ]
