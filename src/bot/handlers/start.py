@@ -3,6 +3,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from src.bot.filters import TextEquals
 from src.bot.keyboards import main_menu_keyboard
 from src.bot.keyboards.callbacks import ActionCallback
 from src.bot.texts import MenuButton
@@ -36,7 +37,7 @@ def create_start_router() -> Router:
         )
 
     @router.message(Command("help"))
-    @router.message(F.text == MenuButton.HELP)
+    @router.message(TextEquals(MenuButton.HELP))
     async def help_message(message: Message) -> None:
         await message.answer(HELP_TEXT, reply_markup=main_menu_keyboard())
 
@@ -60,4 +61,3 @@ def create_start_router() -> Router:
         )
 
     return router
-

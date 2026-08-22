@@ -32,8 +32,13 @@ class FakeMeterRepository:
 
 
 class FakeReadingRepository:
-    def __init__(self, previous: Reading | None = None) -> None:
+    def __init__(
+        self,
+        previous: Reading | None = None,
+        history: list[Reading] | None = None,
+    ) -> None:
         self.previous = previous
+        self.history = history or []
         self.added: list[Reading] = []
 
     async def get_latest_confirmed(self, meter_id: UUID, user_id: UUID) -> Reading | None:
@@ -43,6 +48,15 @@ class FakeReadingRepository:
         saved = replace(reading, id=uuid4(), created_at=CAPTURED_AT)
         self.added.append(saved)
         return saved
+
+    async def list_by_meter(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[Reading]:
+        return self.history[:limit]
 
 
 class FakeManualReadingPersistence:
@@ -192,3 +206,20 @@ async def test_large_delta_can_be_explicitly_confirmed() -> None:
     assert result.validation.requires_confirmation
     assert readings.added == []
     assert len(manual_readings.charges) == 1
+
+
+async def test_history_contains_only_confirmed_values() -> None:
+    service, readings, _, _ = make_service(None)
+    confirmed = previous_reading("123.4")
+    recognized = Reading(
+        id=uuid4(),
+        meter_id=METER_ID,
+        ocr_value=Decimal("125"),
+        status=ReadingStatus.RECOGNIZED,
+        captured_at=CAPTURED_AT,
+    )
+    readings.history = [confirmed, recognized]
+
+    history = await service.list_history(user_id=USER_ID, meter_id=METER_ID)
+
+    assert history == [confirmed]

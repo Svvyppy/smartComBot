@@ -2,7 +2,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
@@ -14,6 +14,7 @@ from src.application.exceptions import (
 from src.application.meters import MeterService
 from src.application.properties import PropertyService
 from src.application.readings import ManualReadingResult, ReadingService
+from src.bot.filters import TextEquals
 from src.bot.keyboards import main_menu_keyboard
 from src.bot.keyboards.callbacks import MeterCallback, PropertyCallback
 from src.bot.keyboards.common import (
@@ -53,7 +54,7 @@ def create_readings_router(
         await message.answer(prompt, reply_markup=properties_keyboard(items, action=action))
 
     @router.message(Command("readings"))
-    @router.message(F.text == MenuButton.READINGS)
+    @router.message(TextEquals(MenuButton.READINGS))
     async def reading_menu(message: Message, current_user: User) -> None:
         await choose_property(
             message,
@@ -63,7 +64,7 @@ def create_readings_router(
         )
 
     @router.message(Command("history"))
-    @router.message(F.text == MenuButton.HISTORY)
+    @router.message(TextEquals(MenuButton.HISTORY))
     async def history_menu(message: Message, current_user: User) -> None:
         await choose_property(
             message,
@@ -208,7 +209,7 @@ def create_readings_router(
         await state.clear()
         await message.answer(result_text(meter, result), reply_markup=main_menu_keyboard())
 
-    @router.message(ReadingForm.value)
+    @router.message(StateFilter(ReadingForm.value))
     async def reading_value(
         message: Message,
         state: FSMContext,
@@ -242,7 +243,7 @@ def create_readings_router(
         )
 
     @router.callback_query(
-        ReadingForm.suspicious_confirmation,
+        StateFilter(ReadingForm.suspicious_confirmation),
         MeterCallback.filter(F.action == "confirm"),
     )
     async def confirm_suspicious(
@@ -272,7 +273,7 @@ def create_readings_router(
         )
 
     @router.callback_query(
-        ReadingForm.suspicious_confirmation,
+        StateFilter(ReadingForm.suspicious_confirmation),
         MeterCallback.filter(F.action == "retry"),
     )
     async def retry_suspicious(

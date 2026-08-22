@@ -1,12 +1,13 @@
 from uuid import UUID
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from src.application.meters import MeterService
 from src.application.properties import PropertyService
+from src.bot.filters import TextEquals
 from src.bot.keyboards import main_menu_keyboard
 from src.bot.keyboards.callbacks import (
     ActionCallback,
@@ -48,7 +49,7 @@ def create_meters_router(properties: PropertyService, meters: MeterService) -> R
         await message.answer(prompt, reply_markup=properties_keyboard(items, action=action))
 
     @router.message(Command("meters"))
-    @router.message(F.text == MenuButton.METERS)
+    @router.message(TextEquals(MenuButton.METERS))
     async def meters_menu(message: Message, current_user: User) -> None:
         await choose_property(
             message,
@@ -145,7 +146,7 @@ def create_meters_router(properties: PropertyService, meters: MeterService) -> R
         )
         await begin_meter_form(callback.message, state, callback_data.property_id)
 
-    @router.message(MeterForm.name)
+    @router.message(StateFilter(MeterForm.name))
     async def meter_name(message: Message, state: FSMContext) -> None:
         if not message.text or not message.text.strip():
             await message.answer("Название не может быть пустым.", reply_markup=cancel_keyboard())
@@ -158,7 +159,7 @@ def create_meters_router(properties: PropertyService, meters: MeterService) -> R
         )
 
     @router.callback_query(
-        MeterForm.utility_type,
+        StateFilter(MeterForm.utility_type),
         UtilityCallback.filter(F.action == "meter"),
     )
     async def meter_utility_type(
@@ -215,7 +216,7 @@ def create_meters_router(properties: PropertyService, meters: MeterService) -> R
             reply_markup=main_menu_keyboard(),
         )
 
-    @router.message(MeterForm.serial_number)
+    @router.message(StateFilter(MeterForm.serial_number))
     async def meter_serial(
         message: Message,
         state: FSMContext,
@@ -227,7 +228,7 @@ def create_meters_router(properties: PropertyService, meters: MeterService) -> R
         await save_meter(message, state, current_user, message.text.strip())
 
     @router.callback_query(
-        MeterForm.serial_number,
+        StateFilter(MeterForm.serial_number),
         ActionCallback.filter(F.action == "skip_serial"),
     )
     async def skip_serial(

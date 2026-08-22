@@ -2,13 +2,14 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from src.application.exceptions import ActiveTariffNotFoundError
 from src.application.properties import PropertyService
 from src.application.tariffs import TariffService
+from src.bot.filters import TextEquals
 from src.bot.keyboards import main_menu_keyboard
 from src.bot.keyboards.callbacks import PropertyCallback, TariffCallback
 from src.bot.keyboards.common import cancel_keyboard, properties_keyboard, tariffs_keyboard
@@ -29,7 +30,7 @@ def create_tariffs_router(properties: PropertyService, tariffs: TariffService) -
     router = Router(name="tariffs")
 
     @router.message(Command("tariffs"))
-    @router.message(F.text == MenuButton.TARIFFS)
+    @router.message(TextEquals(MenuButton.TARIFFS))
     async def tariffs_menu(message: Message, current_user: User) -> None:
         assert current_user.id is not None
         items = await properties.list(user_id=current_user.id)
@@ -103,7 +104,7 @@ def create_tariffs_router(properties: PropertyService, tariffs: TariffService) -
             reply_markup=ReplyKeyboardRemove(),
         )
 
-    @router.message(TariffForm.price)
+    @router.message(StateFilter(TariffForm.price))
     async def tariff_price(
         message: Message,
         state: FSMContext,

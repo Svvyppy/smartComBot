@@ -1,11 +1,12 @@
 from uuid import UUID
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from src.application.properties import PropertyService
+from src.bot.filters import TextEquals
 from src.bot.keyboards import main_menu_keyboard
 from src.bot.keyboards.callbacks import ActionCallback, PropertyCallback
 from src.bot.keyboards.common import (
@@ -32,7 +33,7 @@ def create_properties_router(properties: PropertyService) -> Router:
         )
 
     @router.message(Command("properties"))
-    @router.message(F.text == MenuButton.PROPERTIES)
+    @router.message(TextEquals(MenuButton.PROPERTIES))
     async def list_properties(message: Message, current_user: User) -> None:
         await send_properties(message, current_user)
 
@@ -75,7 +76,7 @@ def create_properties_router(properties: PropertyService) -> Router:
             reply_markup=ReplyKeyboardRemove(),
         )
 
-    @router.message(PropertyForm.name)
+    @router.message(StateFilter(PropertyForm.name))
     async def property_name(message: Message, state: FSMContext) -> None:
         if not message.text or not message.text.strip():
             await message.answer("Название не может быть пустым.", reply_markup=cancel_keyboard())
@@ -114,7 +115,7 @@ def create_properties_router(properties: PropertyService) -> Router:
             reply_markup=main_menu_keyboard(),
         )
 
-    @router.message(PropertyForm.address)
+    @router.message(StateFilter(PropertyForm.address))
     async def property_address(
         message: Message,
         state: FSMContext,
@@ -126,7 +127,7 @@ def create_properties_router(properties: PropertyService) -> Router:
         await save_property(message, state, current_user, message.text.strip())
 
     @router.callback_query(
-        PropertyForm.address,
+        StateFilter(PropertyForm.address),
         ActionCallback.filter(F.action == "skip_address"),
     )
     async def skip_address(
