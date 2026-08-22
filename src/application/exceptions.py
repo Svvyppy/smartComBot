@@ -20,3 +20,7 @@ class ReadingRejectedError(ApplicationError):
 
 class SuspiciousReadingError(ApplicationError):
     """A reading needs explicit confirmation because its delta is unusually large."""
+
+
+class OCRReadingNotFoundError(ApplicationError):
+    """OCR completed but did not find a plausible meter value."""

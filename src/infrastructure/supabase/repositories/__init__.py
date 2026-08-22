@@ -5,6 +5,9 @@ from src.infrastructure.supabase.repositories.manual_reading import (
 from src.infrastructure.supabase.repositories.meter import SupabaseMeterRepository
 from src.infrastructure.supabase.repositories.property import SupabasePropertyRepository
 from src.infrastructure.supabase.repositories.reading import SupabaseReadingRepository
+from src.infrastructure.supabase.repositories.recognized_reading import (
+    SupabaseRecognizedReadingPersistence,
+)
 from src.infrastructure.supabase.repositories.tariff import SupabaseTariffRepository
 from src.infrastructure.supabase.repositories.user import SupabaseUserRepository
 
@@ -14,6 +17,7 @@ __all__ = [
     "SupabaseMeterRepository",
     "SupabasePropertyRepository",
     "SupabaseReadingRepository",
+    "SupabaseRecognizedReadingPersistence",
     "SupabaseTariffRepository",
     "SupabaseUserRepository",
 ]

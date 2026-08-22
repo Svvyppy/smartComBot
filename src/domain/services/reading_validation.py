@@ -27,6 +27,9 @@ class ReadingValidationService:
     def __init__(self, max_monthly_deltas: Mapping[UtilityType, Decimal]) -> None:
         self._max_monthly_deltas = MappingProxyType(dict(max_monthly_deltas))
 
+    def max_delta_for(self, utility_type: UtilityType) -> Decimal | None:
+        return self._max_monthly_deltas.get(utility_type)
+
     def validate(
         self,
         *,
@@ -47,4 +50,3 @@ class ReadingValidationService:
             warnings = ("Расход выглядит необычно большим.",)
 
         return ReadingValidationResult(delta=delta, warnings=warnings)
-
