@@ -27,6 +27,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=MenuButton.PROPERTIES), KeyboardButton(text=MenuButton.METERS)],
             [KeyboardButton(text=MenuButton.READINGS), KeyboardButton(text=MenuButton.TARIFFS)],
             [KeyboardButton(text=MenuButton.HISTORY), KeyboardButton(text=MenuButton.HELP)],
+            [KeyboardButton(text=MenuButton.OCR_DEBUG)],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",

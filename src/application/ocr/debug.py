@@ -1,7 +1,6 @@
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from uuid import UUID
 
 from src.application.interfaces import OCRDebugSampleStore, OCRResult
@@ -55,17 +54,20 @@ class OCRDebugService:
             error=error,
         )
 
-    async def set_expected_value(
+    async def set_goal(
         self,
         *,
         sample_id: UUID,
         user_id: UUID,
-        expected_value: Decimal,
+        goal: str,
     ) -> None:
-        if expected_value < 0:
-            raise ValueError("Expected reading cannot be negative")
-        await self._samples.set_expected_value(
+        normalized_goal = goal.strip()
+        if not normalized_goal:
+            raise ValueError("OCR debug goal cannot be empty")
+        if len(normalized_goal) > 1000:
+            raise ValueError("OCR debug goal is too long")
+        await self._samples.set_goal(
             sample_id=sample_id,
             user_id=user_id,
-            expected_value=expected_value,
+            goal=normalized_goal,
         )

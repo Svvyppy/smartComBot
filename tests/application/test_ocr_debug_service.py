@@ -29,16 +29,16 @@ async def test_debug_capture_persists_photo_result_and_expected_value(tmp_path: 
         image_content=b"jpeg-data",
         captured_at=CAPTURED_AT,
     )
-    await service.set_expected_value(
+    await service.set_goal(
         sample_id=capture.sample_id,
         user_id=USER_ID,
-        expected_value=Decimal("125.6"),
+        goal="  Показание 125.6 и серийный номер 998877  ",
     )
 
     sample_dir = tmp_path / str(capture.sample_id)
     assert (sample_dir / "original.jpg").read_bytes() == b"jpeg-data"
     metadata = (sample_dir / "metadata.json").read_text(encoding="utf-8")
     assert '"status": "ready"' in metadata
-    assert '"expected_value": "125.6"' in metadata
+    assert '"goal": "Показание 125.6 и серийный номер 998877"' in metadata
     assert '"reading": "123.4"' in metadata
     assert "00123.4" in metadata

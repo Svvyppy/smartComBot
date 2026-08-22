@@ -41,6 +41,7 @@ async def run() -> None:
                 BotCommand(command="tariffs", description="Тарифы"),
                 BotCommand(command="readings", description="Передать показания"),
                 BotCommand(command="history", description="История показаний"),
+                BotCommand(command="ocr_debug", description="Отладка распознавания фото"),
                 BotCommand(command="help", description="Помощь"),
                 BotCommand(command="cancel", description="Отменить ввод"),
             ]

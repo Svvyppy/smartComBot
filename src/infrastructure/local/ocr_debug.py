@@ -1,6 +1,5 @@
 import json
 from datetime import datetime
-from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -34,8 +33,8 @@ class LocalOCRDebugSampleStore:
             "user_id": str(user_id),
             "telegram_id": telegram_id,
             "captured_at": captured_at.isoformat(),
-            "status": "awaiting_expected_value",
-            "expected_value": None,
+            "status": "awaiting_goal",
+            "goal": None,
             "current_result": self._result_payload(current_result),
             "error": error,
             "image_file": "original.jpg",
@@ -43,12 +42,12 @@ class LocalOCRDebugSampleStore:
         self._write_metadata(sample_dir, metadata)
         return sample_id
 
-    async def set_expected_value(
+    async def set_goal(
         self,
         *,
         sample_id: UUID,
         user_id: UUID,
-        expected_value: Decimal,
+        goal: str,
     ) -> None:
         sample_dir = self._root / str(sample_id)
         metadata_path = sample_dir / "metadata.json"
@@ -58,7 +57,7 @@ class LocalOCRDebugSampleStore:
         if not isinstance(raw, dict) or raw.get("user_id") != str(user_id):
             raise ValueError("OCR debug sample does not belong to this user")
         metadata: dict[str, object] = dict(raw)
-        metadata["expected_value"] = str(expected_value)
+        metadata["goal"] = goal
         metadata["status"] = "ready"
         self._write_metadata(sample_dir, metadata)
 

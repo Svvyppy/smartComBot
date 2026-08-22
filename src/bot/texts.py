@@ -9,6 +9,7 @@ class MenuButton(StrEnum):
     READINGS = "✍️ Передать показания"
     TARIFFS = "💰 Тарифы"
     HISTORY = "📚 История"
+    OCR_DEBUG = "🧪 Отладка OCR"
     HELP = "ℹ️ Помощь"
 
 
@@ -32,4 +33,3 @@ def utility_label(utility_type: UtilityType) -> str:
 
 def unit_label(unit: MeterUnit) -> str:
     return UNIT_LABELS[unit]
-

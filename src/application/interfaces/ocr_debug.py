@@ -1,5 +1,4 @@
 from datetime import datetime
-from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
@@ -18,10 +17,10 @@ class OCRDebugSampleStore(Protocol):
         error: str | None,
     ) -> UUID: ...
 
-    async def set_expected_value(
+    async def set_goal(
         self,
         *,
         sample_id: UUID,
         user_id: UUID,
-        expected_value: Decimal,
+        goal: str,
     ) -> None: ...

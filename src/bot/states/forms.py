@@ -23,3 +23,8 @@ class ReadingForm(StatesGroup):
     photo_correction = State()
     value = State()
     suspicious_confirmation = State()
+
+
+class OCRDebugForm(StatesGroup):
+    photo = State()
+    goal = State()
