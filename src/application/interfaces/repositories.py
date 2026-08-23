@@ -85,6 +85,13 @@ class OCRFeedbackRepository(Protocol):
         user_id: UUID,
     ) -> MeterOCRProfile: ...
 
+    async def set_feedback_status(
+        self,
+        feedback_id: UUID,
+        user_id: UUID,
+        status: str,
+    ) -> OCRFeedback: ...
+
 
 class TariffRepository(Protocol):
     async def add_plan(self, plan: TariffPlan, user_id: UUID) -> TariffPlan: ...

@@ -8,7 +8,15 @@ import pytest
 from src.application.exceptions import OCRReadingNotFoundError
 from src.application.interfaces import OCRResult
 from src.application.readings import PhotoReadingService
-from src.domain.entities import BillingPeriod, Charge, Meter, Reading, WastewaterCharge
+from src.domain.entities import (
+    BillingPeriod,
+    Charge,
+    Meter,
+    MeterOCRProfile,
+    OCRFeedback,
+    Reading,
+    WastewaterCharge,
+)
 from src.domain.enums import MeterUnit, ReadingStatus, UtilityType
 from src.domain.services import BillingService, ReadingValidationService
 
@@ -134,6 +142,7 @@ class FakeOCRExecutor:
         self.result = result
         self.previous_reading: Decimal | None = None
         self.max_delta: Decimal | None = None
+        self.mechanical_fraction_digits: int | None = None
 
     async def recognize(
         self,
@@ -145,7 +154,49 @@ class FakeOCRExecutor:
     ) -> OCRResult:
         self.previous_reading = previous_reading
         self.max_delta = max_delta
+        self.mechanical_fraction_digits = mechanical_fraction_digits
         return self.result
+
+
+class FakeOCRFeedbackRepository:
+    def __init__(self) -> None:
+        self.feedback: OCRFeedback | None = None
+        self.profiles: dict[UUID, MeterOCRProfile] = {}
+        self.status_updates: list[tuple[UUID, str]] = []
+
+    async def add(self, feedback: OCRFeedback, user_id: UUID) -> OCRFeedback:
+        assert user_id == feedback.user_id
+        self.feedback = replace(feedback, id=uuid4())
+        return self.feedback
+
+    async def get_meter_profile(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+    ) -> MeterOCRProfile | None:
+        assert user_id == USER_ID
+        return self.profiles.get(meter_id)
+
+    async def save_meter_profile(
+        self,
+        profile: MeterOCRProfile,
+        user_id: UUID,
+    ) -> MeterOCRProfile:
+        assert user_id == USER_ID
+        self.profiles[profile.meter_id] = profile
+        return profile
+
+    async def set_feedback_status(
+        self,
+        feedback_id: UUID,
+        user_id: UUID,
+        status: str,
+    ) -> OCRFeedback:
+        assert user_id == USER_ID
+        assert self.feedback is not None
+        self.status_updates.append((feedback_id, status))
+        self.feedback = replace(self.feedback, status=status)
+        return self.feedback
 
 
 class FakeStorage:
@@ -181,14 +232,17 @@ def _service(
     FakeRecognizedPersistence,
     FakeOCRExecutor,
     FakeStorage,
+    FakeOCRFeedbackRepository,
 ]:
     readings = FakeReadingRepository(previous)
     persistence = FakeRecognizedPersistence()
     ocr = FakeOCRExecutor(ocr_result)
     storage = FakeStorage()
+    feedback = FakeOCRFeedbackRepository()
     service = PhotoReadingService(
         meters=FakeMeterRepository(),  # type: ignore[arg-type]
         readings=readings,  # type: ignore[arg-type]
+        ocr_feedback=feedback,
         recognized_readings=persistence,
         tariffs=FakeTariffService(),  # type: ignore[arg-type]
         billing=BillingService(),
@@ -196,11 +250,11 @@ def _service(
         ocr=ocr,  # type: ignore[arg-type]
         storage=storage,
     )
-    return service, readings, persistence, ocr, storage
+    return service, readings, persistence, ocr, storage, feedback
 
 
 async def test_photo_is_uploaded_only_after_successful_recognition() -> None:
-    service, readings, _, ocr, storage = _service(
+    service, readings, _, ocr, storage, _ = _service(
         OCRResult(Decimal("125.4"), "99887766", 0.91, ["00125.4"]),
         _previous(),
     )
@@ -225,7 +279,9 @@ async def test_photo_is_uploaded_only_after_successful_recognition() -> None:
 
 
 async def test_failed_recognition_does_not_upload_or_create_reading() -> None:
-    service, readings, _, _, storage = _service(OCRResult(None, None, 0.0, ["Модель 201"]))
+    service, readings, _, _, storage, _ = _service(
+        OCRResult(None, None, 0.0, ["Модель 201"])
+    )
 
     with pytest.raises(OCRReadingNotFoundError):
         await service.recognize_photo(
@@ -240,7 +296,7 @@ async def test_failed_recognition_does_not_upload_or_create_reading() -> None:
 
 
 async def test_correction_preserves_ocr_value_and_confirms_corrected_value() -> None:
-    service, _, persistence, _, _ = _service(
+    service, _, persistence, _, _, feedback = _service(
         OCRResult(Decimal("125.4"), None, 0.91, ["00125.4"]),
         _previous(),
     )
@@ -255,6 +311,7 @@ async def test_correction_preserves_ocr_value_and_confirms_corrected_value() -> 
         user_id=USER_ID,
         reading_id=recognized.reading.id,  # type: ignore[arg-type]
         value=Decimal("124"),
+        raw_text=recognized.raw_text,
     )
 
     assert result.reading.ocr_value == Decimal("125.4")
@@ -263,10 +320,60 @@ async def test_correction_preserves_ocr_value_and_confirms_corrected_value() -> 
     assert result.billing is not None
     assert result.billing.amount == Decimal("198.00")
     assert persistence.charge is not None
+    assert result.feedback_saved
+    assert not result.profile_updated
+    assert feedback.feedback is not None
+    assert feedback.feedback.detected_value == Decimal("125.4")
+    assert feedback.feedback.corrected_value == Decimal("124")
+
+
+async def test_correction_learns_fraction_digits_only_for_its_meter() -> None:
+    service, _, _, ocr, _, feedback = _service(
+        OCRResult(
+            Decimal("125.4"),
+            "N164701553",
+            0.91,
+            ["001254"],
+            mechanical_digits="001254",
+            mechanical_fraction_digits=1,
+        ),
+        _previous("10"),
+    )
+    recognized = await service.recognize_photo(
+        user_id=USER_ID,
+        meter_id=METER_ID,
+        image_content=b"jpeg",
+        captured_at=CAPTURED_AT,
+    )
+
+    corrected = await service.confirm(
+        user_id=USER_ID,
+        reading_id=recognized.reading.id,  # type: ignore[arg-type]
+        value=Decimal("12.54"),
+        serial_number=recognized.serial_number,
+        raw_text=recognized.raw_text,
+        mechanical_digits=recognized.mechanical_digits,
+    )
+
+    assert corrected.feedback_saved
+    assert corrected.profile_updated
+    assert feedback.profiles[METER_ID].mechanical_fraction_digits == 2
+    assert feedback.feedback is not None
+    assert feedback.feedback.status == "profiled"
+
+    next_result = await service.recognize_photo(
+        user_id=USER_ID,
+        meter_id=METER_ID,
+        image_content=b"another jpeg",
+        captured_at=CAPTURED_AT,
+    )
+
+    assert next_result.reading.ocr_value == Decimal("12.54")
+    assert ocr.mechanical_fraction_digits == 2
 
 
 async def test_first_photo_reading_is_confirmed_as_baseline_without_charge() -> None:
-    service, _, persistence, _, _ = _service(
+    service, _, persistence, _, _, _ = _service(
         OCRResult(Decimal("42.5"), None, 0.95, ["42.5"])
     )
     recognized = await service.recognize_photo(
@@ -290,6 +397,7 @@ def _matching_service(ocr_result: OCRResult) -> PhotoReadingService:
     return PhotoReadingService(
         meters=MatchingMeterRepository(),  # type: ignore[arg-type]
         readings=MatchingReadingRepository(None),  # type: ignore[arg-type]
+        ocr_feedback=FakeOCRFeedbackRepository(),
         recognized_readings=FakeRecognizedPersistence(),
         tariffs=FakeTariffService(),  # type: ignore[arg-type]
         billing=BillingService(),
@@ -345,7 +453,7 @@ async def test_identify_meter_suggests_plausible_previous_reading() -> None:
 
 async def test_recognize_photo_can_reuse_identification_ocr_result() -> None:
     ocr_result = OCRResult(Decimal("125.4"), None, 0.91, ["125.4"])
-    service, _, _, ocr, _ = _service(ocr_result, _previous())
+    service, _, _, ocr, _, _ = _service(ocr_result, _previous())
 
     await service.recognize_photo(
         user_id=USER_ID,

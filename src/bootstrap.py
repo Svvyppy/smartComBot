@@ -19,6 +19,7 @@ from src.infrastructure.supabase import create_supabase_client
 from src.infrastructure.supabase.repositories import (
     SupabaseManualReadingPersistence,
     SupabaseMeterRepository,
+    SupabaseOCRFeedbackRepository,
     SupabasePropertyRepository,
     SupabaseReadingRepository,
     SupabaseRecognizedReadingPersistence,
@@ -76,6 +77,7 @@ def build_application(settings: Settings) -> ApplicationServices:
     photo_readings = PhotoReadingService(
         meters=meter_repository,
         readings=reading_repository,
+        ocr_feedback=SupabaseOCRFeedbackRepository(client),
         recognized_readings=SupabaseRecognizedReadingPersistence(client),
         tariffs=tariffs,
         billing=billing,

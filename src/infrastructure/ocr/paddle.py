@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from src.application.interfaces import OCRResult, OCRTextLine
+from src.domain.services import mechanical_value
 from src.infrastructure.ocr.parser import MeterReadingParser
 from src.infrastructure.ocr.preprocessing import ImageArray, ImagePreprocessor
 
@@ -374,7 +375,7 @@ class PaddleOCRService:
                     else mechanical_fraction_digits
                 )
                 return _CounterReading(
-                    value=self._decimal_from_digits(tenths_digits, fraction_digits),
+                    value=mechanical_value(tenths_digits, fraction_digits),
                     confidence=max(direct_confidence, region.line.confidence),
                     mechanical_digits=tenths_digits,
                     mechanical_fraction_digits=fraction_digits,
@@ -409,21 +410,11 @@ class PaddleOCRService:
             else mechanical_fraction_digits
         )
         return _CounterReading(
-            value=self._decimal_from_digits(digits, fraction_digits),
+            value=mechanical_value(digits, fraction_digits),
             confidence=confidence,
             mechanical_digits=digits,
             mechanical_fraction_digits=fraction_digits,
         )
-
-    @staticmethod
-    def _decimal_from_digits(digits: str, fraction_digits: int) -> Decimal:
-        if not 0 <= fraction_digits <= 6:
-            raise ValueError("mechanical_fraction_digits must be between 0 and 6")
-        if fraction_digits == 0:
-            return Decimal(digits)
-        integer = digits[:-fraction_digits] or "0"
-        fraction = digits[-fraction_digits:]
-        return Decimal(f"{integer}.{fraction}")
 
     def _recognize_counter_cells(self, display: ImageArray) -> tuple[str, float] | None:
         height, width = display.shape[:2]

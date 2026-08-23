@@ -438,6 +438,8 @@ def create_readings_router(
             meter_id=str(meter.id),
             reading_id=str(result.reading.id),
             recognized_serial_number=result.serial_number,
+            recognized_raw_text=list(result.raw_text),
+            recognized_mechanical_digits=result.mechanical_digits,
         )
         await state.set_state(ReadingForm.photo_confirmation)
         await message.answer(
@@ -923,6 +925,8 @@ def create_readings_router(
         await state.update_data(
             reading_id=str(result.reading.id),
             recognized_serial_number=result.serial_number,
+            recognized_raw_text=list(result.raw_text),
+            recognized_mechanical_digits=result.mechanical_digits,
         )
         await state.set_state(ReadingForm.photo_confirmation)
         await message.answer(
@@ -1209,12 +1213,32 @@ def create_readings_router(
         assert current_user.id is not None
         state_data = await state.get_data()
         recognized_serial_number = state_data.get("recognized_serial_number")
+        stored_raw_text = state_data.get("recognized_raw_text")
+        recognized_raw_text = (
+            stored_raw_text
+            if isinstance(stored_raw_text, list)
+            and all(isinstance(line, str) for line in stored_raw_text)
+            else []
+        )
+        stored_mechanical_digits = state_data.get("recognized_mechanical_digits")
+        recognized_mechanical_digits = (
+            stored_mechanical_digits
+            if isinstance(stored_mechanical_digits, str)
+            else None
+        )
         meter = await meters.get(user_id=current_user.id, meter_id=meter_id)
         try:
             result = await photo_readings.confirm(
                 user_id=current_user.id,
                 reading_id=reading_id,
                 value=value,
+                serial_number=(
+                    recognized_serial_number
+                    if isinstance(recognized_serial_number, str)
+                    else None
+                ),
+                raw_text=recognized_raw_text,
+                mechanical_digits=recognized_mechanical_digits,
             )
         except ReadingRejectedError as exc:
             await message.answer(
@@ -1264,6 +1288,22 @@ def create_readings_router(
                     meter_id,
                 )
                 serial_note = "\n\n⚠️ Не удалось привязать серийный номер."
+        learning_note = ""
+        was_corrected = result.reading.ocr_value != result.reading.confirmed_value
+        if was_corrected and result.profile_updated:
+            learning_note = (
+                "\n\n✅ Исправление сохранено. Для этого счётчика создан "
+                "индивидуальный профиль распознавания."
+            )
+        elif was_corrected and result.feedback_saved:
+            learning_note = (
+                "\n\n✅ Исправление сохранено как обучающий пример. "
+                "Оно не изменяет распознавание других пользователей."
+            )
+        elif was_corrected:
+            learning_note = (
+                "\n\n⚠️ Показание принято, но обучающий пример сохранить не удалось."
+            )
         await state.clear()
         logger.info(
             "Photo reading confirmed telegram_id=%s meter_id=%s reading_id=%s corrected=%s",
@@ -1273,7 +1313,7 @@ def create_readings_router(
             value is not None,
         )
         await message.answer(
-            result_text(meter, result) + serial_note,
+            result_text(meter, result) + serial_note + learning_note,
             reply_markup=main_menu_keyboard(),
         )
         return True

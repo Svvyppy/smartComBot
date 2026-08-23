@@ -78,3 +78,21 @@ class SupabaseOCRFeedbackRepository(SupabaseRepository):
         if row is None:
             raise RuntimeError("Supabase did not return the saved OCR meter profile")
         return meter_ocr_profile_from_row(row)
+
+    async def set_feedback_status(
+        self,
+        feedback_id: UUID,
+        user_id: UUID,
+        status: str,
+    ) -> OCRFeedback:
+        response = await self._run(
+            lambda: self._client.table("ocr_feedback")
+            .update({"status": status})
+            .eq("id", str(feedback_id))
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+        row = self._first(response)
+        if row is None:
+            raise RuntimeError("OCR feedback not found or access denied")
+        return ocr_feedback_from_row(row)

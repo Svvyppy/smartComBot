@@ -1,3 +1,5 @@
+import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,21 +13,34 @@ from src.application.exceptions import (
 from src.application.interfaces import (
     ImageStorage,
     MeterRepository,
+    OCRFeedbackRepository,
     OCRResult,
     ReadingRepository,
     RecognizedReadingPersistence,
 )
 from src.application.ocr import OCRExecutor
 from src.application.tariffs import TariffService
-from src.domain.entities import BillingPeriod, Charge, Meter, Reading, WastewaterCharge
+from src.domain.entities import (
+    BillingPeriod,
+    Charge,
+    Meter,
+    MeterOCRProfile,
+    OCRFeedback,
+    Reading,
+    WastewaterCharge,
+)
 from src.domain.enums import ReadingStatus, UtilityType
 from src.domain.services import (
     BillingResult,
     BillingService,
     ReadingValidationResult,
     ReadingValidationService,
+    infer_mechanical_fraction_digits,
+    mechanical_value,
     serial_number_keys,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +50,11 @@ class PhotoReadingResult:
     billing: BillingResult | None
     validation: ReadingValidationResult | None
     serial_number: str | None = None
+    raw_text: tuple[str, ...] = ()
+    mechanical_digits: str | None = None
+    mechanical_fraction_digits: int | None = None
+    feedback_saved: bool = False
+    profile_updated: bool = False
     charge: Charge | None = None
     wastewater_tariff_price: Decimal | None = None
     wastewater_charge: WastewaterCharge | None = None
@@ -66,6 +86,7 @@ class PhotoReadingService:
         *,
         meters: MeterRepository,
         readings: ReadingRepository,
+        ocr_feedback: OCRFeedbackRepository,
         recognized_readings: RecognizedReadingPersistence,
         tariffs: TariffService,
         billing: BillingService,
@@ -75,6 +96,7 @@ class PhotoReadingService:
     ) -> None:
         self._meters = meters
         self._readings = readings
+        self._ocr_feedback = ocr_feedback
         self._recognized_readings = recognized_readings
         self._tariffs = tariffs
         self._billing = billing
@@ -102,10 +124,23 @@ class PhotoReadingService:
             raise OCRReadingNotFoundError("На фотографии не найдено показание счётчика.")
 
         matched_meter = self._match_serial(meters, ocr_result.serial_number)
+        if matched_meter is not None:
+            ocr_result = await self._apply_meter_profile(
+                ocr_result=ocr_result,
+                meter=matched_meter,
+                user_id=user_id,
+            )
+            if ocr_result.reading is None:
+                raise OCRReadingNotFoundError(
+                    "На фотографии не найдено показание счётчика."
+                )
+        current_value = ocr_result.reading
+        if current_value is None:
+            raise OCRReadingNotFoundError("На фотографии не найдено показание счётчика.")
         candidates = await self._rank_candidates(
             meters=meters,
             user_id=user_id,
-            current_value=ocr_result.reading,
+            current_value=current_value,
         )
         suggested_meter = matched_meter
         if suggested_meter is None:
@@ -139,12 +174,17 @@ class PhotoReadingService:
             raise ValueError("captured_at must be timezone-aware")
         previous = await self._readings.get_latest_confirmed(meter_id, user_id)
         previous_value = self._confirmed_value(previous)
+        profile = await self._ocr_feedback.get_meter_profile(meter_id, user_id)
         if ocr_result is None:
             ocr_result = await self._ocr.recognize(
                 image_content,
                 previous_reading=previous_value,
                 max_delta=self._validation.max_delta_for(meter.type),
+                mechanical_fraction_digits=(
+                    None if profile is None else profile.mechanical_fraction_digits
+                ),
             )
+        ocr_result = self._with_profile(ocr_result, profile)
         if ocr_result.reading is None:
             raise OCRReadingNotFoundError("На фотографии не найдено показание счётчика.")
 
@@ -178,6 +218,9 @@ class PhotoReadingService:
             billing=billing_result,
             validation=validation,
             serial_number=ocr_result.serial_number,
+            raw_text=tuple(ocr_result.raw_text),
+            mechanical_digits=ocr_result.mechanical_digits,
+            mechanical_fraction_digits=ocr_result.mechanical_fraction_digits,
             charge=self._charge_preview(
                 reading=reading,
                 previous_value=previous_value,
@@ -193,6 +236,9 @@ class PhotoReadingService:
         user_id: UUID,
         reading_id: UUID,
         value: Decimal | None = None,
+        serial_number: str | None = None,
+        raw_text: Sequence[str] = (),
+        mechanical_digits: str | None = None,
     ) -> PhotoReadingResult:
         existing = await self._readings.get_owned(reading_id, user_id)
         if existing is None:
@@ -235,6 +281,25 @@ class PhotoReadingService:
             wastewater_tariff_price=wastewater_tariff_price,
             user_id=user_id,
         )
+        feedback_saved = False
+        profile_updated = False
+        if confirmed_value != existing.ocr_value:
+            try:
+                feedback_saved, profile_updated = await self._record_correction(
+                    user_id=user_id,
+                    reading=final_reading,
+                    detected_value=existing.ocr_value,
+                    corrected_value=confirmed_value,
+                    serial_number=serial_number,
+                    raw_text=raw_text,
+                    mechanical_digits=mechanical_digits,
+                )
+            except Exception:
+                logger.exception(
+                    "OCR correction feedback save failed user_id=%s reading_id=%s",
+                    user_id,
+                    reading_id,
+                )
         return PhotoReadingResult(
             reading=final_reading,
             previous_reading=previous_value,
@@ -243,6 +308,102 @@ class PhotoReadingService:
             charge=charge,
             wastewater_tariff_price=wastewater_tariff_price,
             wastewater_charge=wastewater_charge,
+            feedback_saved=feedback_saved,
+            profile_updated=profile_updated,
+        )
+
+    async def _record_correction(
+        self,
+        *,
+        user_id: UUID,
+        reading: Reading,
+        detected_value: Decimal,
+        corrected_value: Decimal,
+        serial_number: str | None,
+        raw_text: Sequence[str],
+        mechanical_digits: str | None,
+    ) -> tuple[bool, bool]:
+        if reading.id is None:
+            raise RuntimeError("Confirmed reading does not have an id")
+        fraction_digits = infer_mechanical_fraction_digits(
+            mechanical_digits,
+            corrected_value,
+        )
+        feedback = await self._ocr_feedback.add(
+            OCRFeedback(
+                reading_id=reading.id,
+                meter_id=reading.meter_id,
+                user_id=user_id,
+                detected_value=detected_value,
+                corrected_value=corrected_value,
+                serial_number=serial_number,
+                raw_text=tuple(raw_text),
+                mechanical_digits=mechanical_digits,
+                photo_path=reading.photo_path,
+            ),
+            user_id,
+        )
+        if fraction_digits is None or feedback.id is None:
+            return True, False
+        try:
+            await self._ocr_feedback.save_meter_profile(
+                MeterOCRProfile(
+                    meter_id=reading.meter_id,
+                    mechanical_fraction_digits=fraction_digits,
+                    learned_from_feedback_id=feedback.id,
+                ),
+                user_id,
+            )
+        except Exception:
+            logger.exception(
+                "Meter OCR profile save failed user_id=%s meter_id=%s",
+                user_id,
+                reading.meter_id,
+            )
+            return True, False
+        try:
+            await self._ocr_feedback.set_feedback_status(
+                feedback.id,
+                user_id,
+                "profiled",
+            )
+        except Exception:
+            logger.exception(
+                "OCR feedback status update failed feedback_id=%s",
+                feedback.id,
+            )
+        return True, True
+
+    async def _apply_meter_profile(
+        self,
+        *,
+        ocr_result: OCRResult,
+        meter: Meter,
+        user_id: UUID,
+    ) -> OCRResult:
+        if meter.id is None:
+            return ocr_result
+        profile = await self._ocr_feedback.get_meter_profile(meter.id, user_id)
+        return self._with_profile(ocr_result, profile)
+
+    @staticmethod
+    def _with_profile(
+        ocr_result: OCRResult,
+        profile: MeterOCRProfile | None,
+    ) -> OCRResult:
+        if (
+            profile is None
+            or profile.mechanical_fraction_digits is None
+            or ocr_result.mechanical_digits is None
+        ):
+            return ocr_result
+        return replace(
+            ocr_result,
+            reading=mechanical_value(
+                ocr_result.mechanical_digits,
+                profile.mechanical_fraction_digits,
+            ),
+            mechanical_fraction_digits=profile.mechanical_fraction_digits,
         )
 
     async def reject(self, *, user_id: UUID, reading_id: UUID) -> Reading:
