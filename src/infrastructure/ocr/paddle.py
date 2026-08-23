@@ -523,7 +523,7 @@ class PaddleOCRService:
 
     def _recognize_lcd_last_digit(self, display: ImageArray) -> tuple[str, float] | None:
         height, width = display.shape[:2]
-        raw_digit_image = display[int(height * 0.3) :, int(width * 0.86) : int(width * 0.98)]
+        raw_digit_image = display[int(height * 0.3) :, int(width * 0.88) : int(width * 0.94)]
         if raw_digit_image.size == 0:
             return None
         digit_image = self._add_white_border(raw_digit_image, 30)
