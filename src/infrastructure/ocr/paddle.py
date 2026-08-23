@@ -35,6 +35,11 @@ RecognizerFactory = Callable[..., PaddleTextRecognizer]
 _COUNTER_LINE = re.compile(r"^[\d\s.,:;-]+$")
 _EXPECTED_COUNTER_DIGITS = 8
 _COUNTER_FRACTION_DIGITS = 3
+_LCD_UNIT = re.compile(r"(?:k[bв][tт]|квт)", re.IGNORECASE)
+_LCD_READING = re.compile(r"(?<!\d)(\d{1,6})[.,](\d{2})(?!\d)")
+_LCD_FRACTION = re.compile(r"[.,](\d{2})(?!\d)")
+_LCD_MIN_INTEGER_DIGITS = 3
+_LCD_MAX_INTEGER_DIGITS = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,10 +133,7 @@ class PaddleOCRService:
         """Recognize an already prepared image while reusing the loaded OCR engine."""
 
         engine_image = self._ensure_three_channels(image)
-        pages = self._get_engine().predict(engine_image, text_det_unclip_ratio=1.2)
-        regions: list[_OCRRegion] = []
-        for page in pages:
-            regions.extend(self._extract_page_regions(page))
+        regions = self._predict_regions(engine_image)
         lines = [region.line for region in regions]
         parsed = self._parser.parse(
             lines,
@@ -143,6 +145,13 @@ class PaddleOCRService:
             regions,
         )
         if counter is None:
+            counter = self._recognize_lcd(
+                self._ensure_three_channels(source_image)
+                if source_image is not None
+                else engine_image,
+                regions,
+            )
+        if counter is None:
             return parsed
         return OCRResult(
             reading=counter.value,
@@ -150,6 +159,13 @@ class PaddleOCRService:
             confidence=counter.confidence,
             raw_text=parsed.raw_text,
         )
+
+    def _predict_regions(self, image: ImageArray) -> list[_OCRRegion]:
+        pages = self._get_engine().predict(image, text_det_unclip_ratio=1.2)
+        regions: list[_OCRRegion] = []
+        for page in pages:
+            regions.extend(self._extract_page_regions(page))
+        return regions
 
     @staticmethod
     def _ensure_three_channels(image: ImageArray) -> ImageArray:
@@ -319,6 +335,146 @@ class PaddleOCRService:
         integer = digits[:-_COUNTER_FRACTION_DIGITS]
         fraction = digits[-_COUNTER_FRACTION_DIGITS:]
         return _CounterReading(value=Decimal(f"{integer}.{fraction}"), confidence=confidence)
+
+    def _recognize_lcd(
+        self,
+        source_image: ImageArray,
+        regions: list[_OCRRegion],
+    ) -> _CounterReading | None:
+        candidates = [
+            region
+            for region in regions
+            if self._is_lcd_line(region, regions, source_image.shape[0])
+        ]
+        if not candidates:
+            return None
+        region = max(candidates, key=self._polygon_height)
+        assert region.polygon is not None
+        integer_digits = self._digits(region.line.text)
+
+        for horizontal_scale in (2.7, 3.0):
+            display = self._crop_lcd_line(source_image, region.polygon, horizontal_scale)
+            if display.size == 0:
+                continue
+            display = self._add_white_border(display, 20)
+            direct = self._find_lcd_reading(
+                self._predict_regions(display),
+                integer_digits,
+            )
+            if direct is not None:
+                return direct
+
+        if len(integer_digits) < 4:
+            return None
+        display = self._crop_lcd_line(source_image, region.polygon, 2.4)
+        if display.size == 0:
+            return None
+        height, width = display.shape[:2]
+        fraction_image = display[int(height * 0.35) :, int(width * 0.7) :]
+        if fraction_image.size == 0:
+            return None
+        fraction_image = self._add_white_border(fraction_image, 30)
+        fraction = self._find_lcd_fraction(self._predict_regions(fraction_image))
+        if fraction is None:
+            return None
+        fraction_digits, fraction_confidence = fraction
+        return _CounterReading(
+            value=Decimal(f"{integer_digits}.{fraction_digits}"),
+            confidence=min(region.line.confidence, fraction_confidence),
+        )
+
+    @classmethod
+    def _is_lcd_line(
+        cls,
+        region: _OCRRegion,
+        regions: list[_OCRRegion],
+        image_height: int,
+    ) -> bool:
+        if region.polygon is None or _COUNTER_LINE.fullmatch(region.line.text) is None:
+            return False
+        digit_count = len(cls._digits(region.line.text))
+        if not _LCD_MIN_INTEGER_DIGITS <= digit_count <= _LCD_MAX_INTEGER_DIGITS:
+            return False
+        height = cls._polygon_height(region)
+        if height < image_height * 0.08:
+            return False
+        center_y = float(region.polygon[:, 1].mean())
+        return any(
+            other.polygon is not None
+            and _LCD_UNIT.search(other.line.text) is not None
+            and 0 < center_y - float(other.polygon[:, 1].mean()) < height * 1.5
+            for other in regions
+        )
+
+    @staticmethod
+    def _crop_lcd_line(
+        source_image: ImageArray,
+        polygon: NDArray[np.float32],
+        horizontal_scale: float,
+    ) -> ImageArray:
+        min_y = float(polygon[:, 1].min())
+        max_y = float(polygon[:, 1].max())
+        height = max_y - min_y
+        center_x = float((polygon[:, 0].min() + polygon[:, 0].max()) / 2)
+        image_height, image_width = source_image.shape[:2]
+        x1 = max(0, int(center_x - horizontal_scale * height))
+        x2 = min(image_width, int(center_x + horizontal_scale * height))
+        y1 = max(0, int(min_y - 0.15 * height))
+        y2 = min(image_height, int(max_y + 0.45 * height))
+        return source_image[y1:y2, x1:x2]
+
+    @staticmethod
+    def _add_white_border(image: ImageArray, size: int) -> ImageArray:
+        return np.asarray(
+            cv2.copyMakeBorder(
+                image,
+                size,
+                size,
+                size,
+                size,
+                cv2.BORDER_CONSTANT,
+                value=(255, 255, 255),
+            ),
+            dtype=np.uint8,
+        )
+
+    @classmethod
+    def _find_lcd_reading(
+        cls,
+        regions: list[_OCRRegion],
+        expected_integer_fragment: str,
+    ) -> _CounterReading | None:
+        matches: list[_CounterReading] = []
+        for region in regions:
+            for match in _LCD_READING.finditer(region.line.text):
+                integer, fraction = match.groups()
+                if expected_integer_fragment not in integer:
+                    continue
+                matches.append(
+                    _CounterReading(
+                        value=Decimal(f"{integer}.{fraction}"),
+                        confidence=region.line.confidence,
+                    )
+                )
+        return max(matches, key=lambda item: item.confidence, default=None)
+
+    @staticmethod
+    def _find_lcd_fraction(regions: list[_OCRRegion]) -> tuple[str, float] | None:
+        matches: list[tuple[float, str]] = []
+        for region in regions:
+            match = _LCD_FRACTION.search(region.line.text)
+            if match is not None:
+                matches.append((region.line.confidence, match.group(1)))
+        if not matches:
+            return None
+        confidence, fraction = max(matches, key=lambda item: item[0])
+        return fraction, confidence
+
+    @staticmethod
+    def _polygon_height(region: _OCRRegion) -> float:
+        if region.polygon is None:
+            return 0.0
+        return float(region.polygon[:, 1].max() - region.polygon[:, 1].min())
 
     @staticmethod
     def _is_counter_line(region: _OCRRegion) -> bool:

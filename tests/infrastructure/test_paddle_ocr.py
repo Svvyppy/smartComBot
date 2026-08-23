@@ -90,6 +90,45 @@ class FakeCounterRecognizer:
         return self._results
 
 
+class FakeLCDPage:
+    def __init__(
+        self,
+        texts: list[str],
+        scores: list[float],
+        polygons: list[list[list[int]]] | None = None,
+    ) -> None:
+        payload: dict[str, object] = {"rec_texts": texts, "rec_scores": scores}
+        if polygons is not None:
+            payload["rec_polys"] = polygons
+        self.json = {"res": payload}
+
+
+class FakeLCDEngine:
+    def __init__(self, pages: list[FakeLCDPage]) -> None:
+        self._pages = pages
+        self.predict_calls = 0
+
+    def predict(self, input_image: ImageArray, **kwargs: object) -> Iterable[object]:
+        assert input_image.ndim == 3
+        assert input_image.shape[2] == 3
+        assert kwargs["text_det_unclip_ratio"] == 1.2
+        page = self._pages[self.predict_calls]
+        self.predict_calls += 1
+        return [page]
+
+
+def _lcd_source_page(reading: str) -> FakeLCDPage:
+    return FakeLCDPage(
+        ["KBTU", reading, "Ne.22297698"],
+        [0.72, 0.82, 0.91],
+        [
+            [[450, 150], [550, 150], [550, 180], [450, 180]],
+            [[350, 200], [650, 200], [650, 320], [350, 320]],
+            [[100, 40], [350, 40], [350, 80], [100, 80]],
+        ],
+    )
+
+
 def test_paddle_adapter_reuses_engine_and_parses_v3_result() -> None:
     engine = FakeEngine()
     factory_calls: list[dict[str, object]] = []
@@ -195,3 +234,47 @@ def test_paddle_adapter_recovers_eight_wheel_counter_reading(
     assert result.serial_number == expected_serial
     assert len(recognizer_calls) == 1
     assert recognizer_calls[0]["model_name"] == "en_PP-OCRv5_mobile_rec"
+
+
+def test_paddle_adapter_recognizes_complete_lcd_reading_on_expanded_crop() -> None:
+    engine = FakeLCDEngine(
+        [
+            _lcd_source_page("346"),
+            FakeLCDPage(["3465.81"], [0.87]),
+        ]
+    )
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: engine,
+    )
+
+    result = service.recognize(_jpeg())
+
+    assert result.reading == Decimal("3465.81")
+    assert result.serial_number == "22297698"
+    assert result.confidence == 0.87
+    assert engine.predict_calls == 2
+
+
+def test_paddle_adapter_combines_lcd_integer_with_separate_fraction_crop() -> None:
+    engine = FakeLCDEngine(
+        [
+            _lcd_source_page("1172"),
+            FakeLCDPage(["117"], [0.71]),
+            FakeLCDPage(["101172"], [0.66]),
+            FakeLCDPage(["C.55"], [0.74]),
+        ]
+    )
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: engine,
+    )
+
+    result = service.recognize(_jpeg())
+
+    assert result.reading == Decimal("1172.55")
+    assert result.serial_number == "22297698"
+    assert result.confidence == 0.74
+    assert engine.predict_calls == 4
