@@ -15,6 +15,7 @@ from src.domain.services import BillingService, ReadingValidationService
 USER_ID = UUID("10000000-0000-0000-0000-000000000001")
 PROPERTY_ID = UUID("20000000-0000-0000-0000-000000000002")
 METER_ID = UUID("30000000-0000-0000-0000-000000000003")
+SECOND_METER_ID = UUID("30000000-0000-0000-0000-000000000005")
 READING_ID = UUID("40000000-0000-0000-0000-000000000004")
 CAPTURED_AT = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
@@ -30,6 +31,17 @@ class FakeMeterRepository:
 
     async def get_owned(self, meter_id: UUID, user_id: UUID) -> Meter | None:
         return self.meter if (meter_id, user_id) == (METER_ID, USER_ID) else None
+
+    async def list_by_property(
+        self,
+        property_id: UUID,
+        user_id: UUID,
+        *,
+        active_only: bool = True,
+    ) -> list[Meter]:
+        if (property_id, user_id) != (PROPERTY_ID, USER_ID):
+            return []
+        return [self.meter]
 
 
 class FakeReadingRepository:
@@ -52,6 +64,46 @@ class FakeReadingRepository:
     async def save_owned(self, reading: Reading, user_id: UUID) -> Reading:
         self.saved = reading
         return reading
+
+
+class MatchingMeterRepository:
+    def __init__(self) -> None:
+        self.meters = [
+            Meter(
+                id=METER_ID,
+                property_id=PROPERTY_ID,
+                name="Холодная вода",
+                type=UtilityType.COLD_WATER,
+                unit=MeterUnit.CUBIC_METER,
+                serial_number="22297698",
+            ),
+            Meter(
+                id=SECOND_METER_ID,
+                property_id=PROPERTY_ID,
+                name="Горячая вода",
+                type=UtilityType.HOT_WATER,
+                unit=MeterUnit.CUBIC_METER,
+                serial_number="N164701553",
+            ),
+        ]
+
+    async def list_by_property(
+        self,
+        property_id: UUID,
+        user_id: UUID,
+        *,
+        active_only: bool = True,
+    ) -> list[Meter]:
+        return self.meters if (property_id, user_id) == (PROPERTY_ID, USER_ID) else []
+
+
+class MatchingReadingRepository(FakeReadingRepository):
+    async def get_latest_confirmed(self, meter_id: UUID, user_id: UUID) -> Reading | None:
+        if meter_id == METER_ID:
+            return replace(_previous("3450"), meter_id=METER_ID)
+        if meter_id == SECOND_METER_ID:
+            return replace(_previous("1170"), meter_id=SECOND_METER_ID)
+        return None
 
 
 class FakeRecognizedPersistence:
@@ -231,3 +283,75 @@ async def test_first_photo_reading_is_confirmed_as_baseline_without_charge() -> 
     assert result.is_baseline
     assert result.charge is None
     assert persistence.charge is None
+
+
+def _matching_service(ocr_result: OCRResult) -> PhotoReadingService:
+    return PhotoReadingService(
+        meters=MatchingMeterRepository(),  # type: ignore[arg-type]
+        readings=MatchingReadingRepository(None),  # type: ignore[arg-type]
+        recognized_readings=FakeRecognizedPersistence(),
+        tariffs=FakeTariffService(),  # type: ignore[arg-type]
+        billing=BillingService(),
+        validation=ReadingValidationService(
+            {
+                UtilityType.COLD_WATER: Decimal("100"),
+                UtilityType.HOT_WATER: Decimal("100"),
+            }
+        ),
+        ocr=FakeOCRExecutor(ocr_result),  # type: ignore[arg-type]
+        storage=FakeStorage(),
+    )
+
+
+async def test_identify_meter_matches_normalized_serial_number() -> None:
+    service = _matching_service(
+        OCRResult(Decimal("3465.81"), "No. 22297698", 0.91, ["No.22297698"])
+    )
+
+    result = await service.identify_meter(
+        user_id=USER_ID,
+        property_id=PROPERTY_ID,
+        image_content=b"jpeg",
+    )
+
+    assert result.matched_meter is not None
+    assert result.matched_meter.id == METER_ID
+    assert result.suggested_meter == result.matched_meter
+
+
+async def test_identify_meter_suggests_plausible_previous_reading() -> None:
+    service = _matching_service(
+        OCRResult(Decimal("1182.5"), None, 0.91, ["1182.5 m3"])
+    )
+
+    result = await service.identify_meter(
+        user_id=USER_ID,
+        property_id=PROPERTY_ID,
+        image_content=b"jpeg",
+    )
+
+    assert result.matched_meter is None
+    assert result.suggested_meter is not None
+    assert result.suggested_meter.id == SECOND_METER_ID
+    assert [candidate.meter.id for candidate in result.candidates] == [
+        SECOND_METER_ID,
+        METER_ID,
+    ]
+    assert result.candidates[0].delta == Decimal("12.5")
+    assert result.candidates[0].is_plausible
+    assert not result.candidates[1].is_plausible
+
+
+async def test_recognize_photo_can_reuse_identification_ocr_result() -> None:
+    ocr_result = OCRResult(Decimal("125.4"), None, 0.91, ["125.4"])
+    service, _, _, ocr, _ = _service(ocr_result, _previous())
+
+    await service.recognize_photo(
+        user_id=USER_ID,
+        meter_id=METER_ID,
+        image_content=b"jpeg",
+        captured_at=CAPTURED_AT,
+        ocr_result=ocr_result,
+    )
+
+    assert ocr.previous_reading is None

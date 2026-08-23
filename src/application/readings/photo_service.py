@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -11,6 +12,7 @@ from src.application.exceptions import (
 from src.application.interfaces import (
     ImageStorage,
     MeterRepository,
+    OCRResult,
     ReadingRepository,
     RecognizedReadingPersistence,
 )
@@ -42,6 +44,22 @@ class PhotoReadingResult:
         return self.previous_reading is None
 
 
+@dataclass(frozen=True, slots=True)
+class PhotoMeterCandidate:
+    meter: Meter
+    previous_reading: Decimal | None
+    delta: Decimal | None
+    is_plausible: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PhotoMeterIdentification:
+    ocr_result: OCRResult
+    matched_meter: Meter | None
+    suggested_meter: Meter | None
+    candidates: tuple[PhotoMeterCandidate, ...]
+
+
 class PhotoReadingService:
     def __init__(
         self,
@@ -64,6 +82,48 @@ class PhotoReadingService:
         self._ocr = ocr
         self._storage = storage
 
+    async def identify_meter(
+        self,
+        *,
+        user_id: UUID,
+        property_id: UUID,
+        image_content: bytes,
+    ) -> PhotoMeterIdentification:
+        meters = await self._meters.list_by_property(
+            property_id,
+            user_id,
+            active_only=True,
+        )
+        if not meters:
+            raise ReadingRejectedError("У объекта нет активных счётчиков.")
+
+        ocr_result = await self._ocr.recognize(image_content)
+        if ocr_result.reading is None:
+            raise OCRReadingNotFoundError("На фотографии не найдено показание счётчика.")
+
+        matched_meter = self._match_serial(meters, ocr_result.serial_number)
+        candidates = await self._rank_candidates(
+            meters=meters,
+            user_id=user_id,
+            current_value=ocr_result.reading,
+        )
+        suggested_meter = matched_meter
+        if suggested_meter is None:
+            suggested_meter = next(
+                (
+                    candidate.meter
+                    for candidate in candidates
+                    if candidate.previous_reading is not None and candidate.is_plausible
+                ),
+                None,
+            )
+        return PhotoMeterIdentification(
+            ocr_result=ocr_result,
+            matched_meter=matched_meter,
+            suggested_meter=suggested_meter,
+            candidates=candidates,
+        )
+
     async def recognize_photo(
         self,
         *,
@@ -71,6 +131,7 @@ class PhotoReadingService:
         meter_id: UUID,
         image_content: bytes,
         captured_at: datetime | None = None,
+        ocr_result: OCRResult | None = None,
     ) -> PhotoReadingResult:
         meter = await self._get_active_meter(user_id=user_id, meter_id=meter_id)
         captured = captured_at or datetime.now(UTC)
@@ -78,11 +139,12 @@ class PhotoReadingService:
             raise ValueError("captured_at must be timezone-aware")
         previous = await self._readings.get_latest_confirmed(meter_id, user_id)
         previous_value = self._confirmed_value(previous)
-        ocr_result = await self._ocr.recognize(
-            image_content,
-            previous_reading=previous_value,
-            max_delta=self._validation.max_delta_for(meter.type),
-        )
+        if ocr_result is None:
+            ocr_result = await self._ocr.recognize(
+                image_content,
+                previous_reading=previous_value,
+                max_delta=self._validation.max_delta_for(meter.type),
+            )
         if ocr_result.reading is None:
             raise OCRReadingNotFoundError("На фотографии не найдено показание счётчика.")
 
@@ -201,6 +263,64 @@ class PhotoReadingService:
         if not meter.active:
             raise ReadingRejectedError("Cannot add a reading to an inactive meter")
         return meter
+
+    async def _rank_candidates(
+        self,
+        *,
+        meters: list[Meter],
+        user_id: UUID,
+        current_value: Decimal,
+    ) -> tuple[PhotoMeterCandidate, ...]:
+        candidates: list[PhotoMeterCandidate] = []
+        for meter in meters:
+            if meter.id is None:
+                continue
+            previous = await self._readings.get_latest_confirmed(meter.id, user_id)
+            previous_value = self._confirmed_value(previous)
+            delta = None if previous_value is None else current_value - previous_value
+            limit = self._validation.max_delta_for(meter.type)
+            is_plausible = delta is None or (
+                delta >= 0 and (limit is None or delta <= limit)
+            )
+            candidates.append(
+                PhotoMeterCandidate(
+                    meter=meter,
+                    previous_reading=previous_value,
+                    delta=delta,
+                    is_plausible=is_plausible,
+                )
+            )
+        candidates.sort(key=self._candidate_sort_key)
+        return tuple(candidates)
+
+    @staticmethod
+    def _candidate_sort_key(candidate: PhotoMeterCandidate) -> tuple[int, Decimal, str]:
+        if candidate.previous_reading is not None and candidate.is_plausible:
+            return 0, candidate.delta or Decimal(0), candidate.meter.name.casefold()
+        if candidate.previous_reading is None:
+            return 1, Decimal(0), candidate.meter.name.casefold()
+        return 2, abs(candidate.delta or Decimal(0)), candidate.meter.name.casefold()
+
+    @classmethod
+    def _match_serial(cls, meters: list[Meter], serial_number: str | None) -> Meter | None:
+        if serial_number is None:
+            return None
+        recognized_keys = cls._serial_keys(serial_number)
+        if not recognized_keys:
+            return None
+        for meter in meters:
+            if meter.serial_number and recognized_keys & cls._serial_keys(meter.serial_number):
+                return meter
+        return None
+
+    @staticmethod
+    def _serial_keys(serial_number: str) -> frozenset[str]:
+        normalized = re.sub(r"[^0-9A-ZА-Я]", "", serial_number.upper())
+        digits = "".join(character for character in normalized if character.isdigit())
+        keys = {normalized} if normalized else set()
+        if len(digits) >= 6:
+            keys.add(digits)
+        return frozenset(keys)
 
     @staticmethod
     def _confirmed_value(previous: Reading | None) -> Decimal | None:
