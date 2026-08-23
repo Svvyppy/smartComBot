@@ -139,6 +139,14 @@ def reading_meters_keyboard(
     meters: Sequence[Meter],
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if len(meters) > 1 and all(meter.serial_number for meter in meters):
+        builder.button(
+            text="🖼 Отправить все фото одним альбомом",
+            callback_data=PropertyCallback(
+                action="photo_album",
+                property_id=property_id,
+            ),
+        )
     builder.button(
         text="📷 Определить счётчик по фото",
         callback_data=PropertyCallback(
@@ -155,6 +163,31 @@ def reading_meters_keyboard(
         )
     builder.adjust(1)
     return builder.as_markup()
+
+
+def photo_album_confirmation_keyboard(property_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить все",
+                    callback_data=PropertyCallback(
+                        action="confirm_album",
+                        property_id=property_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=PropertyCallback(
+                        action="reject_album",
+                        property_id=property_id,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
 
 
 def photo_meter_selection_keyboard(

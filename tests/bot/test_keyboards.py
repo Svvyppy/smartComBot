@@ -1,3 +1,4 @@
+from dataclasses import replace
 from uuid import UUID
 
 from src.bot.keyboards.callbacks import (
@@ -10,6 +11,7 @@ from src.bot.keyboards.callbacks import (
 )
 from src.bot.keyboards.common import (
     main_menu_keyboard,
+    photo_album_confirmation_keyboard,
     photo_confirmation_keyboard,
     photo_meter_selection_keyboard,
     reading_meters_keyboard,
@@ -28,6 +30,7 @@ def test_callback_payloads_fit_telegram_limit() -> None:
     callbacks = [
         ActionCallback(action="add_property").pack(),
         PropertyCallback(action="add_meter", property_id=str(ID)).pack(),
+        PropertyCallback(action="confirm_album", property_id=str(ID)).pack(),
         MeterCallback(action="confirm", meter_id=str(ID)).pack(),
         MeterCallback(action="select_photo", meter_id=str(ID)).pack(),
         ReadingCallback(action="correct", reading_id=str(ID)).pack(),
@@ -90,6 +93,48 @@ def test_reading_meters_keyboard_offers_photo_identification() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels == ["📷 Определить счётчик по фото", "Горячая вода — ГВС"]
+
+
+def test_reading_meters_keyboard_offers_album_only_when_all_meters_are_bound() -> None:
+    second_id = UUID("20000000-0000-0000-0000-000000000002")
+    first = Meter(
+        id=ID,
+        property_id=ID,
+        name="ГВС",
+        type=UtilityType.HOT_WATER,
+        unit=MeterUnit.CUBIC_METER,
+        serial_number="11111111",
+    )
+    second = Meter(
+        id=second_id,
+        property_id=ID,
+        name="ХВС",
+        type=UtilityType.COLD_WATER,
+        unit=MeterUnit.CUBIC_METER,
+        serial_number="22222222",
+    )
+
+    bound_keyboard = reading_meters_keyboard(str(ID), [first, second])
+    bound_labels = [
+        button.text for row in bound_keyboard.inline_keyboard for button in row
+    ]
+    unbound_keyboard = reading_meters_keyboard(
+        str(ID),
+        [first, replace(second, serial_number=None)],
+    )
+    unbound_labels = [
+        button.text for row in unbound_keyboard.inline_keyboard for button in row
+    ]
+
+    assert "🖼 Отправить все фото одним альбомом" in bound_labels
+    assert "🖼 Отправить все фото одним альбомом" not in unbound_labels
+
+
+def test_photo_album_confirmation_keyboard_has_bulk_actions() -> None:
+    keyboard = photo_album_confirmation_keyboard(str(ID))
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert labels == ["✅ Подтвердить все", "Отмена"]
 
 
 def test_photo_meter_selection_marks_suggestion() -> None:

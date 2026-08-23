@@ -21,6 +21,8 @@ class ReadingForm(StatesGroup):
     photo = State()
     unassigned_photo = State()
     photo_meter_selection = State()
+    photo_album = State()
+    photo_album_confirmation = State()
     photo_confirmation = State()
     photo_correction = State()
     value = State()

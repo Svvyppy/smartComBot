@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 from decimal import Decimal
@@ -31,6 +32,7 @@ from src.bot.keyboards.callbacks import MeterCallback, PropertyCallback, Reading
 from src.bot.keyboards.common import (
     cancel_keyboard,
     meters_keyboard,
+    photo_album_confirmation_keyboard,
     photo_confirmation_keyboard,
     photo_meter_selection_keyboard,
     properties_keyboard,
@@ -55,6 +57,7 @@ def create_readings_router(
     max_photo_bytes: int = 10_000_000,
 ) -> Router:
     router = Router(name="readings")
+    album_lock = asyncio.Lock()
 
     async def choose_property(
         message: Message,
@@ -163,6 +166,47 @@ def create_readings_router(
             reply_markup=cancel_keyboard(),
         )
 
+    @router.callback_query(PropertyCallback.filter(F.action == "photo_album"))
+    async def start_photo_album(
+        callback: CallbackQuery,
+        callback_data: PropertyCallback,
+        state: FSMContext,
+        current_user: User,
+    ) -> None:
+        await callback.answer()
+        if not isinstance(callback.message, Message):
+            return
+        assert current_user.id is not None
+        property_id = UUID(callback_data.property_id)
+        await properties.get(user_id=current_user.id, property_id=property_id)
+        items = await meters.list(user_id=current_user.id, property_id=property_id)
+        if len(items) < 2 or any(not meter.serial_number for meter in items):
+            await callback.message.answer(
+                "Альбом станет доступен, когда у всех активных счётчиков "
+                "будут привязаны серийные номера."
+            )
+            return
+        meter_ids = [str(meter.id) for meter in items if meter.id is not None]
+        if len(meter_ids) != len(items):
+            raise RuntimeError("Persisted meter does not have an id")
+        await state.clear()
+        await state.update_data(
+            property_id=callback_data.property_id,
+            album_expected_meter_ids=meter_ids,
+            album_items=[],
+            album_received_count=0,
+            album_errors=[],
+            album_media_group_id=None,
+        )
+        await state.set_state(ReadingForm.photo_album)
+        names = "\n".join(f"• {meter.name}" for meter in items)
+        await callback.message.answer(
+            f"Выберите ровно {len(items)} фото в Telegram и отправьте их одним "
+            f"альбомом. Порядок не важен — я сопоставлю счётчики по номерам.\n\n"
+            f"Ожидаются:\n{names}",
+            reply_markup=cancel_keyboard(),
+        )
+
     @router.callback_query(PropertyCallback.filter(F.action == "history"))
     async def choose_history_meter(
         callback: CallbackQuery,
@@ -262,6 +306,8 @@ def create_readings_router(
     def result_text(
         meter: Meter,
         result: ManualReadingResult | PhotoReadingResult,
+        *,
+        include_wastewater: bool = True,
     ) -> str:
         assert result.reading.confirmed_value is not None
         current = format_decimal(result.reading.confirmed_value)
@@ -283,7 +329,7 @@ def create_readings_router(
             f"Тариф: {format_decimal(result.charge.tariff_price)} ₽/{unit}\n"
             f"Стоимость: {format_money(result.billing.amount)} ₽"
         )
-        if result.wastewater_charge is None:
+        if result.wastewater_charge is None or not include_wastewater:
             return text
         wastewater = result.wastewater_charge
         return (
@@ -348,6 +394,24 @@ def create_readings_router(
             reply_markup=reading_method_keyboard(str(meter_id)),
         )
 
+    async def reject_album_items(
+        current_user: User,
+        items: list[dict[str, str]],
+    ) -> None:
+        assert current_user.id is not None
+        for item in items:
+            try:
+                await photo_readings.reject(
+                    user_id=current_user.id,
+                    reading_id=UUID(item["reading_id"]),
+                )
+            except Exception:
+                logger.exception(
+                    "Album reading rejection failed telegram_id=%s reading_id=%s",
+                    current_user.telegram_id,
+                    item.get("reading_id"),
+                )
+
     async def create_photo_preview(
         message: Message,
         state: FSMContext,
@@ -379,6 +443,161 @@ def create_readings_router(
         await message.answer(
             recognition_text(meter, result),
             reply_markup=photo_confirmation_keyboard(str(result.reading.id)),
+        )
+
+    @router.message(StateFilter(ReadingForm.photo_album), HasPhoto())
+    async def collect_photo_album(
+        message: Message,
+        state: FSMContext,
+        current_user: User,
+        bot: Bot,
+    ) -> None:
+        if message.media_group_id is None:
+            await message.answer(
+                "Нужно выбрать все фотографии в галерее и отправить их одним альбомом.",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+
+        async with album_lock:
+            data = await state.get_data()
+            try:
+                property_id = UUID(str(data["property_id"]))
+                expected_meter_ids = list(data["album_expected_meter_ids"])
+                items: list[dict[str, str]] = list(data.get("album_items", []))
+                errors: list[str] = list(data.get("album_errors", []))
+                received_count = int(data.get("album_received_count", 0)) + 1
+            except (KeyError, TypeError, ValueError):
+                await state.clear()
+                await message.answer(
+                    "Сценарий альбома устарел. Начните заново.",
+                    reply_markup=main_menu_keyboard(),
+                )
+                return
+
+            media_group_id = str(message.media_group_id)
+            active_media_group_id = data.get("album_media_group_id")
+            if active_media_group_id not in (None, media_group_id):
+                await message.answer(
+                    "Получен другой альбом. Отмените сценарий и отправьте фото заново.",
+                    reply_markup=cancel_keyboard(),
+                )
+                return
+            if received_count > len(expected_meter_ids):
+                await reject_album_items(current_user, items)
+                await state.clear()
+                await message.answer(
+                    f"В альбоме больше {len(expected_meter_ids)} фото. "
+                    "Все распознанные результаты отклонены — начните заново.",
+                    reply_markup=main_menu_keyboard(),
+                )
+                return
+
+            assert message.photo
+            photo = message.photo[-1]
+            meter: Meter | None = None
+            result: PhotoReadingResult | None = None
+            error: str | None = None
+            if photo.file_size is not None and photo.file_size > max_photo_bytes:
+                error = f"Фото {received_count}: файл слишком большой."
+            else:
+                try:
+                    destination = BytesIO()
+                    await bot.download(photo, destination=destination)
+                    image_content = destination.getvalue()
+                    if len(image_content) > max_photo_bytes:
+                        raise ValueError("файл слишком большой")
+                    assert current_user.id is not None
+                    identification = await photo_readings.identify_meter(
+                        user_id=current_user.id,
+                        property_id=property_id,
+                        image_content=image_content,
+                    )
+                    meter = identification.matched_meter
+                    if meter is None or meter.id is None:
+                        raise ReadingRejectedError(
+                            "серийный номер не распознан или не совпал"
+                        )
+                    meter_id = str(meter.id)
+                    if meter_id not in expected_meter_ids:
+                        raise ReadingRejectedError("счётчик не относится к этому объекту")
+                    if any(item["meter_id"] == meter_id for item in items):
+                        raise ReadingRejectedError(
+                            f"фото счётчика «{meter.name}» получено повторно"
+                        )
+                    result = await photo_readings.recognize_photo(
+                        user_id=current_user.id,
+                        meter_id=meter.id,
+                        image_content=image_content,
+                        captured_at=message.date,
+                        ocr_result=identification.ocr_result,
+                    )
+                    if result.reading.id is None:
+                        raise RuntimeError("Saved album reading does not have an id")
+                    items.append(
+                        {
+                            "meter_id": meter_id,
+                            "reading_id": str(result.reading.id),
+                        }
+                    )
+                except (
+                    ActiveTariffNotFoundError,
+                    OCRReadingNotFoundError,
+                    ReadingRejectedError,
+                    ValueError,
+                ) as exc:
+                    error = f"Фото {received_count}: {exc}"
+                except Exception:
+                    logger.exception(
+                        "Album photo recognition failed telegram_id=%s property_id=%s",
+                        current_user.telegram_id,
+                        property_id,
+                    )
+                    error = f"Фото {received_count}: не удалось обработать."
+
+            if error is not None:
+                errors.append(error)
+                await message.answer(error)
+            elif meter is not None and result is not None:
+                await message.answer(
+                    f"Фото {received_count}/{len(expected_meter_ids)} сопоставлено.\n\n"
+                    + recognition_text(meter, result)
+                )
+
+            await state.update_data(
+                album_media_group_id=media_group_id,
+                album_received_count=received_count,
+                album_items=items,
+                album_errors=errors,
+            )
+            if received_count < len(expected_meter_ids):
+                return
+
+            if errors or len(items) != len(expected_meter_ids):
+                await reject_album_items(current_user, items)
+                await state.clear()
+                details = "\n".join(f"• {item}" for item in errors)
+                await message.answer(
+                    "Альбом не принят. Распознанные результаты отклонены.\n\n"
+                    f"{details}\n\nИсправьте фотографии и начните заново.",
+                    reply_markup=main_menu_keyboard(),
+                )
+                return
+
+            await state.set_state(ReadingForm.photo_album_confirmation)
+            await message.answer(
+                f"Все {len(items)} фото сопоставлены со счётчиками. "
+                "Проверьте результаты выше и подтвердите их вместе. "
+                "Если хотя бы одно значение неверно — отмените альбом и "
+                "передайте этот счётчик отдельно.",
+                reply_markup=photo_album_confirmation_keyboard(str(property_id)),
+            )
+
+    @router.message(StateFilter(ReadingForm.photo_album))
+    async def photo_album_expected(message: Message) -> None:
+        await message.answer(
+            "Отправьте фотографии одним Telegram-альбомом.",
+            reply_markup=cancel_keyboard(),
         )
 
     def meter_identification_text(result: PhotoMeterIdentification) -> str:
@@ -842,6 +1061,119 @@ def create_readings_router(
         await state.update_data(meter_id=callback_data.meter_id)
         await state.set_state(ReadingForm.value)
         await callback.message.answer("Введите исправленное показание:")
+
+    async def selected_album_items(
+        callback: CallbackQuery,
+        callback_data: PropertyCallback,
+        state: FSMContext,
+    ) -> list[dict[str, str]] | None:
+        data = await state.get_data()
+        if data.get("property_id") != callback_data.property_id:
+            await state.clear()
+            await callback.answer("Подтверждение устарело", show_alert=True)
+            if isinstance(callback.message, Message):
+                await callback.message.answer(
+                    "Начните передачу альбома заново.",
+                    reply_markup=main_menu_keyboard(),
+                )
+            return None
+        items = data.get("album_items")
+        if not isinstance(items, list) or not items:
+            await state.clear()
+            await callback.answer("В альбоме нет показаний", show_alert=True)
+            return None
+        return items
+
+    @router.callback_query(
+        StateFilter(ReadingForm.photo_album_confirmation),
+        PropertyCallback.filter(F.action == "confirm_album"),
+    )
+    async def confirm_photo_album(
+        callback: CallbackQuery,
+        callback_data: PropertyCallback,
+        state: FSMContext,
+        current_user: User,
+    ) -> None:
+        items = await selected_album_items(callback, callback_data, state)
+        if items is None or not isinstance(callback.message, Message):
+            return
+        await callback.answer()
+        assert current_user.id is not None
+        confirmed: list[tuple[Meter, PhotoReadingResult]] = []
+        failed: list[dict[str, str]] = []
+        errors: list[str] = []
+        for item in items:
+            try:
+                meter_id = UUID(item["meter_id"])
+                reading_id = UUID(item["reading_id"])
+                meter = await meters.get(user_id=current_user.id, meter_id=meter_id)
+                result = await photo_readings.confirm(
+                    user_id=current_user.id,
+                    reading_id=reading_id,
+                )
+                confirmed.append((meter, result))
+            except Exception as exc:
+                logger.exception(
+                    "Album confirmation failed telegram_id=%s reading_id=%s",
+                    current_user.telegram_id,
+                    item.get("reading_id"),
+                )
+                failed.append(item)
+                errors.append(str(exc) or "неизвестная ошибка")
+
+        if failed:
+            await reject_album_items(current_user, failed)
+        await state.clear()
+
+        wastewater_indexes = [
+            index
+            for index, (_, result) in enumerate(confirmed)
+            if result.wastewater_charge is not None
+        ]
+        last_wastewater_index = wastewater_indexes[-1] if wastewater_indexes else None
+        for index, (meter, result) in enumerate(confirmed):
+            await callback.message.answer(
+                result_text(
+                    meter,
+                    result,
+                    include_wastewater=index == last_wastewater_index,
+                )
+            )
+
+        if errors:
+            details = "\n".join(f"• {error}" for error in errors)
+            await callback.message.answer(
+                f"Подтверждено: {len(confirmed)} из {len(items)}.\n"
+                f"Ошибки:\n{details}",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        await callback.message.answer(
+            f"Все показания подтверждены: {len(confirmed)}.",
+            reply_markup=main_menu_keyboard(),
+        )
+
+    @router.callback_query(
+        StateFilter(ReadingForm.photo_album_confirmation),
+        PropertyCallback.filter(F.action == "reject_album"),
+    )
+    async def reject_photo_album(
+        callback: CallbackQuery,
+        callback_data: PropertyCallback,
+        state: FSMContext,
+        current_user: User,
+    ) -> None:
+        items = await selected_album_items(callback, callback_data, state)
+        if items is None:
+            return
+        await reject_album_items(current_user, items)
+        await state.clear()
+        await callback.answer("Альбом отклонён")
+        if isinstance(callback.message, Message):
+            await callback.message.answer(
+                "Все распознанные показания из альбома отклонены.",
+                reply_markup=main_menu_keyboard(),
+            )
 
     async def selected_photo_reading(
         callback: CallbackQuery,
