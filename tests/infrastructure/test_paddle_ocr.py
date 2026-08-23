@@ -90,6 +90,22 @@ class FakeCounterRecognizer:
         return self._results
 
 
+class FakeLCDDigitRecognizer:
+    def __init__(self, text: str, score: float) -> None:
+        self._result = FakeRecognitionResult(text, score)
+
+    def predict(
+        self,
+        input_image: list[ImageArray],
+        *,
+        batch_size: int = 1,
+    ) -> Iterable[object]:
+        assert len(input_image) == 1
+        assert input_image[0].ndim == 3
+        assert batch_size == 1
+        return [self._result]
+
+
 class FakeLCDPage:
     def __init__(
         self,
@@ -280,3 +296,27 @@ def test_paddle_adapter_combines_lcd_integer_with_separate_fraction_crop() -> No
     assert result.serial_number == "22297698"
     assert result.confidence == 0.74
     assert engine.predict_calls == 5
+
+
+def test_paddle_adapter_completes_thin_last_lcd_digit_from_its_cell() -> None:
+    engine = FakeLCDEngine(
+        [
+            _lcd_source_page("346", unit="KBrou"),
+            _lcd_source_page("346"),
+            FakeLCDPage(["3465.8"], [0.90]),
+            FakeLCDPage(["13465.8"], [0.93]),
+        ]
+    )
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: engine,
+        counter_recognizer_factory=lambda **_: FakeLCDDigitRecognizer("I", 0.86),
+    )
+
+    result = service.recognize(_jpeg())
+
+    assert result.reading == Decimal("3465.81")
+    assert result.serial_number == "22297698"
+    assert result.confidence == 0.86
+    assert engine.predict_calls == 4

@@ -37,6 +37,7 @@ _EXPECTED_COUNTER_DIGITS = 8
 _COUNTER_FRACTION_DIGITS = 3
 _LCD_UNIT = re.compile(r"(?:k[bв][tтrр]|квт)", re.IGNORECASE)
 _LCD_READING = re.compile(r"(?<!\d)(\d{1,6})[.,](\d{2})(?!\d)")
+_LCD_PARTIAL_READING = re.compile(r"(?<!\d)(\d{1,6})[.,](\d)(?!\d)")
 _LCD_FRACTION = re.compile(r"[.,](\d{2})(?!\d)")
 _LCD_MIN_INTEGER_DIGITS = 3
 _LCD_MAX_INTEGER_DIGITS = 6
@@ -52,6 +53,14 @@ class _OCRRegion:
 class _CounterReading:
     value: Decimal
     confidence: float
+
+
+@dataclass(frozen=True, slots=True)
+class _PartialLCDReading:
+    integer: str
+    fraction: str
+    confidence: float
+    display: ImageArray
 
 
 class PaddleOCRService:
@@ -364,17 +373,36 @@ class PaddleOCRService:
             assert source_region.polygon is not None
             source_polygon = source_region.polygon
 
+        partials: list[_PartialLCDReading] = []
         for horizontal_scale in (2.7, 3.0):
             display = self._crop_lcd_line(source_image, source_polygon, horizontal_scale)
             if display.size == 0:
                 continue
-            display = self._add_white_border(display, 20)
+            bordered_display = self._add_white_border(display, 20)
+            display_regions = self._predict_regions(bordered_display)
             direct = self._find_lcd_reading(
-                self._predict_regions(display),
+                display_regions,
                 integer_digits,
             )
             if direct is not None:
                 return direct
+            partial = self._find_partial_lcd_reading(
+                display_regions,
+                integer_digits,
+                display,
+            )
+            if partial is not None:
+                partials.append(partial)
+
+        if partials:
+            partial = max(partials, key=lambda item: item.confidence)
+            last_digit = self._recognize_lcd_last_digit(partial.display)
+            if last_digit is not None:
+                digit, digit_confidence = last_digit
+                return _CounterReading(
+                    value=Decimal(f"{partial.integer}.{partial.fraction}{digit}"),
+                    confidence=min(partial.confidence, digit_confidence),
+                )
 
         if len(integer_digits) < 4:
             return None
@@ -460,7 +488,7 @@ class PaddleOCRService:
         for region in regions:
             for match in _LCD_READING.finditer(region.line.text):
                 integer, fraction = match.groups()
-                if expected_integer_fragment not in integer:
+                if not cls._lcd_integer_matches(integer, expected_integer_fragment):
                     continue
                 matches.append(
                     _CounterReading(
@@ -469,6 +497,70 @@ class PaddleOCRService:
                     )
                 )
         return max(matches, key=lambda item: item.confidence, default=None)
+
+    @classmethod
+    def _find_partial_lcd_reading(
+        cls,
+        regions: list[_OCRRegion],
+        expected_integer_fragment: str,
+        display: ImageArray,
+    ) -> _PartialLCDReading | None:
+        matches: list[_PartialLCDReading] = []
+        for region in regions:
+            for match in _LCD_PARTIAL_READING.finditer(region.line.text):
+                integer, fraction = match.groups()
+                if not cls._lcd_integer_matches(integer, expected_integer_fragment):
+                    continue
+                matches.append(
+                    _PartialLCDReading(
+                        integer=integer,
+                        fraction=fraction,
+                        confidence=region.line.confidence,
+                        display=display,
+                    )
+                )
+        return max(matches, key=lambda item: item.confidence, default=None)
+
+    def _recognize_lcd_last_digit(self, display: ImageArray) -> tuple[str, float] | None:
+        height, width = display.shape[:2]
+        raw_digit_image = display[int(height * 0.3) :, int(width * 0.86) : int(width * 0.98)]
+        if raw_digit_image.size == 0:
+            return None
+        digit_image = self._add_white_border(raw_digit_image, 30)
+        results = list(self._get_counter_recognizer().predict([digit_image], batch_size=1))
+        if not results:
+            return None
+        text, confidence = self._extract_direct_result(results[0])
+        digits = self._digits(text)
+        if len(digits) == 1 and confidence >= 0.5:
+            return digits, confidence
+        if (
+            text.strip().upper() in {"I", "L", "|"}
+            and confidence >= 0.8
+            and self._dark_pixel_ratio(raw_digit_image) < 0.055
+        ):
+            return "1", confidence
+        return None
+
+    @staticmethod
+    def _lcd_integer_matches(integer: str, expected_fragment: str) -> bool:
+        normalized_integer = integer.lstrip("0") or "0"
+        normalized_fragment = expected_fragment.lstrip("0") or "0"
+        return normalized_integer.startswith(normalized_fragment)
+
+    @staticmethod
+    def _dark_pixel_ratio(image: ImageArray) -> float:
+        grayscale = np.asarray(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), dtype=np.uint8)
+        mask = cv2.adaptiveThreshold(
+            grayscale,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            31,
+            7,
+        )
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), dtype=np.uint8))
+        return float(np.count_nonzero(mask)) / float(mask.size)
 
     @staticmethod
     def _find_lcd_fraction(regions: list[_OCRRegion]) -> tuple[str, float] | None:
