@@ -97,3 +97,20 @@ class SupabaseReadingRepository(SupabaseRepository):
         )
         return [reading_from_row(row) for row in self._data(response)]
 
+    async def list_photo_paths_by_meter(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+    ) -> list[str]:
+        await self._require_meter_owned(meter_id, user_id)
+        response = await self._run(
+            lambda: self._client.table("readings")
+            .select("photo_path")
+            .eq("meter_id", str(meter_id))
+            .execute()
+        )
+        return [
+            path
+            for row in self._data(response)
+            if isinstance((path := row.get("photo_path")), str) and path
+        ]

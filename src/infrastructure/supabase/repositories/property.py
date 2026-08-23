@@ -48,3 +48,12 @@ class SupabasePropertyRepository(SupabaseRepository):
         )
         return [property_from_row(row) for row in self._data(response)]
 
+    async def delete_owned(self, property_id: UUID, user_id: UUID) -> None:
+        await self._require_property_owned(property_id, user_id)
+        await self._run(
+            lambda: self._client.table("properties")
+            .delete()
+            .eq("id", str(property_id))
+            .eq("user_id", str(user_id))
+            .execute()
+        )

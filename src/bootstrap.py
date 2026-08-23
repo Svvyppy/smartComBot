@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from src.application.management import ManagementService
 from src.application.meters import MeterService
 from src.application.ocr import OCRDebugService, OCRExecutor
 from src.application.properties import PropertyService
@@ -34,6 +35,7 @@ class ApplicationServices:
     users: UserService
     properties: PropertyService
     meters: MeterService
+    management: ManagementService
     tariffs: TariffService
     readings: ReadingService
     photo_readings: PhotoReadingService
@@ -43,7 +45,8 @@ class ApplicationServices:
 def build_application(settings: Settings) -> ApplicationServices:
     client = create_supabase_client(settings)
     users = UserService(SupabaseUserRepository(client))
-    properties = PropertyService(SupabasePropertyRepository(client))
+    property_repository = SupabasePropertyRepository(client)
+    properties = PropertyService(property_repository)
     meter_repository = SupabaseMeterRepository(client)
     meters = MeterService(meter_repository)
     tariff_repository = SupabaseTariffRepository(client)
@@ -74,6 +77,7 @@ def build_application(settings: Settings) -> ApplicationServices:
         cpu_threads=settings.ocr_cpu_threads,
     )
     ocr_executor = OCRExecutor(ocr, max_concurrency=settings.ocr_max_concurrency)
+    image_storage = SupabaseImageStorage(client, settings.supabase_storage_bucket)
     photo_readings = PhotoReadingService(
         meters=meter_repository,
         readings=reading_repository,
@@ -83,7 +87,7 @@ def build_application(settings: Settings) -> ApplicationServices:
         billing=billing,
         validation=validation,
         ocr=ocr_executor,
-        storage=SupabaseImageStorage(client, settings.supabase_storage_bucket),
+        storage=image_storage,
     )
     ocr_debug = OCRDebugService(
         ocr=ocr_executor,
@@ -93,6 +97,12 @@ def build_application(settings: Settings) -> ApplicationServices:
         users=users,
         properties=properties,
         meters=meters,
+        management=ManagementService(
+            properties=property_repository,
+            meters=meter_repository,
+            readings=reading_repository,
+            storage=image_storage,
+        ),
         tariffs=tariffs,
         readings=readings,
         photo_readings=photo_readings,

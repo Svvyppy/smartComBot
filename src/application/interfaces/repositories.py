@@ -30,6 +30,8 @@ class PropertyRepository(Protocol):
 
     async def list_by_user(self, user_id: UUID) -> list[Property]: ...
 
+    async def delete_owned(self, property_id: UUID, user_id: UUID) -> None: ...
+
 
 class MeterRepository(Protocol):
     async def add(self, meter: Meter, user_id: UUID) -> Meter: ...
@@ -58,6 +60,8 @@ class MeterRepository(Protocol):
         active_only: bool = True,
     ) -> list[Meter]: ...
 
+    async def delete_owned(self, meter_id: UUID, user_id: UUID) -> None: ...
+
 
 class ReadingRepository(Protocol):
     async def add(self, reading: Reading, user_id: UUID) -> Reading: ...
@@ -75,6 +79,12 @@ class ReadingRepository(Protocol):
         *,
         limit: int = 100,
     ) -> list[Reading]: ...
+
+    async def list_photo_paths_by_meter(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+    ) -> list[str]: ...
 
 
 class OCRFeedbackRepository(Protocol):

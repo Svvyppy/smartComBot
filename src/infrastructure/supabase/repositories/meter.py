@@ -101,3 +101,12 @@ class SupabaseMeterRepository(SupabaseRepository):
 
         response = await self._run(query)
         return [meter_from_row(row) for row in self._data(response)]
+
+    async def delete_owned(self, meter_id: UUID, user_id: UUID) -> None:
+        await self._require_meter_owned(meter_id, user_id)
+        await self._run(
+            lambda: self._client.table("meters")
+            .delete()
+            .eq("id", str(meter_id))
+            .execute()
+        )

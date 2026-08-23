@@ -39,3 +39,11 @@ class SupabaseImageStorage:
         )
         return path
 
+    async def delete_files(self, paths: list[str]) -> None:
+        unique_paths = list(dict.fromkeys(path for path in paths if path))
+        for offset in range(0, len(unique_paths), 100):
+            batch = unique_paths[offset : offset + 100]
+            await asyncio.to_thread(
+                self._client.storage.from_(self._bucket).remove,
+                batch,
+            )
