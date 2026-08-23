@@ -14,6 +14,7 @@ from src.bot.keyboards.common import (
     photo_album_confirmation_keyboard,
     photo_confirmation_keyboard,
     photo_meter_selection_keyboard,
+    photo_serial_correction_keyboard,
     reading_meters_keyboard,
     reading_method_keyboard,
     tariffs_keyboard,
@@ -63,6 +64,13 @@ def test_photo_confirmation_keyboard_has_all_decisions() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels == ["✅ Подтвердить", "✏️ Исправить", "Отмена"]
+
+
+def test_photo_serial_correction_can_keep_recognized_number() -> None:
+    keyboard = photo_serial_correction_keyboard("N164701553")
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert labels == ["Оставить: N164701553", "Отмена"]
 
 
 def test_wastewater_is_a_tariff_but_not_a_physical_meter_type() -> None:

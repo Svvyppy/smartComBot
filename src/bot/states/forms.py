@@ -25,6 +25,7 @@ class ReadingForm(StatesGroup):
     photo_album_confirmation = State()
     photo_confirmation = State()
     photo_correction = State()
+    photo_serial_correction = State()
     value = State()
     suspicious_confirmation = State()
 

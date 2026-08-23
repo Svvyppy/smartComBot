@@ -337,3 +337,29 @@ def photo_confirmation_keyboard(reading_id: str) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def photo_serial_correction_keyboard(
+    recognized_serial_number: str | None,
+) -> InlineKeyboardMarkup:
+    keep_label = (
+        f"Оставить: {recognized_serial_number[:32]}"
+        if recognized_serial_number
+        else "Пропустить"
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=keep_label,
+                    callback_data=ActionCallback(action="keep_photo_serial").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=ActionCallback(action="cancel").pack(),
+                )
+            ],
+        ]
+    )

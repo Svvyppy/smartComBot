@@ -38,6 +38,7 @@ from src.domain.services import (
     infer_mechanical_fraction_digits,
     mechanical_value,
     serial_number_keys,
+    serial_numbers_match,
 )
 
 logger = logging.getLogger(__name__)
@@ -236,7 +237,8 @@ class PhotoReadingService:
         user_id: UUID,
         reading_id: UUID,
         value: Decimal | None = None,
-        serial_number: str | None = None,
+        detected_serial_number: str | None = None,
+        corrected_serial_number: str | None = None,
         raw_text: Sequence[str] = (),
         mechanical_digits: str | None = None,
     ) -> PhotoReadingResult:
@@ -283,16 +285,23 @@ class PhotoReadingService:
         )
         feedback_saved = False
         profile_updated = False
-        if confirmed_value != existing.ocr_value:
+        value_changed = confirmed_value != existing.ocr_value
+        serial_changed = self._serial_was_corrected(
+            detected_serial_number,
+            corrected_serial_number,
+        )
+        if value_changed or serial_changed:
             try:
                 feedback_saved, profile_updated = await self._record_correction(
                     user_id=user_id,
                     reading=final_reading,
                     detected_value=existing.ocr_value,
                     corrected_value=confirmed_value,
-                    serial_number=serial_number,
+                    detected_serial_number=detected_serial_number,
+                    corrected_serial_number=corrected_serial_number,
                     raw_text=raw_text,
                     mechanical_digits=mechanical_digits,
+                    value_changed=value_changed,
                 )
             except Exception:
                 logger.exception(
@@ -319,15 +328,21 @@ class PhotoReadingService:
         reading: Reading,
         detected_value: Decimal,
         corrected_value: Decimal,
-        serial_number: str | None,
+        detected_serial_number: str | None,
+        corrected_serial_number: str | None,
         raw_text: Sequence[str],
         mechanical_digits: str | None,
+        value_changed: bool,
     ) -> tuple[bool, bool]:
         if reading.id is None:
             raise RuntimeError("Confirmed reading does not have an id")
-        fraction_digits = infer_mechanical_fraction_digits(
-            mechanical_digits,
-            corrected_value,
+        fraction_digits = (
+            infer_mechanical_fraction_digits(
+                mechanical_digits,
+                corrected_value,
+            )
+            if value_changed
+            else None
         )
         feedback = await self._ocr_feedback.add(
             OCRFeedback(
@@ -336,7 +351,8 @@ class PhotoReadingService:
                 user_id=user_id,
                 detected_value=detected_value,
                 corrected_value=corrected_value,
-                serial_number=serial_number,
+                serial_number=detected_serial_number,
+                corrected_serial_number=corrected_serial_number,
                 raw_text=tuple(raw_text),
                 mechanical_digits=mechanical_digits,
                 photo_path=reading.photo_path,
@@ -373,6 +389,20 @@ class PhotoReadingService:
                 feedback.id,
             )
         return True, True
+
+    @staticmethod
+    def _serial_was_corrected(
+        detected_serial_number: str | None,
+        corrected_serial_number: str | None,
+    ) -> bool:
+        if corrected_serial_number is None:
+            return False
+        if detected_serial_number is None:
+            return True
+        return not serial_numbers_match(
+            detected_serial_number,
+            corrected_serial_number,
+        )
 
     async def _apply_meter_profile(
         self,

@@ -19,12 +19,16 @@ def test_feedback_case_from_supabase_row() -> None:
             "detected_value": "1279.290000",
             "photo_path": "user/property/meter/photo.jpg",
             "status": "profiled",
+            "serial_number": "WRONG-123456",
+            "corrected_serial_number": "N164701553",
         }
     )
 
     assert case.id == FEEDBACK_ID
     assert case.meter_id == METER_ID
     assert case.corrected_value == Decimal("127.929")
+    assert case.detected_serial_number == "WRONG-123456"
+    assert case.corrected_serial_number == "N164701553"
 
 
 def test_feedback_case_requires_original_photo() -> None:
@@ -37,6 +41,8 @@ def test_feedback_case_requires_original_photo() -> None:
                 "detected_value": "2",
                 "photo_path": None,
                 "status": "pending",
+                "serial_number": None,
+                "corrected_serial_number": None,
             }
         )
 

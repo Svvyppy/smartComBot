@@ -28,13 +28,19 @@ from src.application.readings import (
 )
 from src.bot.filters import HasPhoto, TextEquals
 from src.bot.keyboards import main_menu_keyboard
-from src.bot.keyboards.callbacks import MeterCallback, PropertyCallback, ReadingCallback
+from src.bot.keyboards.callbacks import (
+    ActionCallback,
+    MeterCallback,
+    PropertyCallback,
+    ReadingCallback,
+)
 from src.bot.keyboards.common import (
     cancel_keyboard,
     meters_keyboard,
     photo_album_confirmation_keyboard,
     photo_confirmation_keyboard,
     photo_meter_selection_keyboard,
+    photo_serial_correction_keyboard,
     properties_keyboard,
     reading_meters_keyboard,
     reading_method_keyboard,
@@ -44,6 +50,7 @@ from src.bot.presentation import format_decimal, format_money, parse_decimal
 from src.bot.states import ReadingForm
 from src.bot.texts import MenuButton, unit_label, utility_label
 from src.domain.entities import Meter, User
+from src.domain.services import clean_serial_number, serial_numbers_match
 
 logger = logging.getLogger(__name__)
 
@@ -1209,10 +1216,15 @@ def create_readings_router(
         reading_id: UUID,
         meter_id: UUID,
         value: Decimal | None,
+        corrected_serial_number: str | None = None,
+        serial_was_corrected: bool = False,
     ) -> bool:
         assert current_user.id is not None
         state_data = await state.get_data()
-        recognized_serial_number = state_data.get("recognized_serial_number")
+        stored_serial_number = state_data.get("recognized_serial_number")
+        recognized_serial_number = (
+            stored_serial_number if isinstance(stored_serial_number, str) else None
+        )
         stored_raw_text = state_data.get("recognized_raw_text")
         recognized_raw_text = (
             stored_raw_text
@@ -1227,20 +1239,51 @@ def create_readings_router(
             else None
         )
         meter = await meters.get(user_id=current_user.id, meter_id=meter_id)
+        serial_note = ""
+        if serial_was_corrected and corrected_serial_number:
+            try:
+                meter, serial_was_changed = await meters.set_serial_number(
+                    user_id=current_user.id,
+                    meter_id=meter_id,
+                    serial_number=corrected_serial_number,
+                )
+            except ValueError as exc:
+                await message.answer(
+                    f"Серийный номер не сохранён: {exc}\nВведите другой номер.",
+                    reply_markup=cancel_keyboard(),
+                )
+                return False
+            except Exception:
+                logger.exception(
+                    "Meter serial correction failed telegram_id=%s meter_id=%s",
+                    current_user.telegram_id,
+                    meter_id,
+                )
+                await message.answer(
+                    "Не удалось сохранить серийный номер. Введите его ещё раз.",
+                    reply_markup=cancel_keyboard(),
+                )
+                return False
+            if serial_was_changed:
+                serial_note = (
+                    "\n\nСерийный номер счётчика исправлен: "
+                    f"{meter.serial_number}."
+                )
         try:
             result = await photo_readings.confirm(
                 user_id=current_user.id,
                 reading_id=reading_id,
                 value=value,
-                serial_number=(
-                    recognized_serial_number
-                    if isinstance(recognized_serial_number, str)
-                    else None
+                detected_serial_number=recognized_serial_number,
+                corrected_serial_number=(
+                    corrected_serial_number if serial_was_corrected else None
                 ),
                 raw_text=recognized_raw_text,
                 mechanical_digits=recognized_mechanical_digits,
             )
         except ReadingRejectedError as exc:
+            if value is not None:
+                await state.set_state(ReadingForm.photo_correction)
             await message.answer(
                 f"Показание не принято: {exc}\nВведите другое значение.",
                 reply_markup=cancel_keyboard(),
@@ -1266,13 +1309,17 @@ def create_readings_router(
             )
             return False
 
-        serial_note = ""
-        if isinstance(recognized_serial_number, str) and recognized_serial_number:
+        serial_number_to_save = (
+            corrected_serial_number
+            if serial_was_corrected
+            else recognized_serial_number
+        )
+        if serial_number_to_save and not serial_was_corrected:
             try:
                 meter, was_bound = await meters.bind_serial_number_if_missing(
                     user_id=current_user.id,
                     meter_id=meter_id,
-                    serial_number=recognized_serial_number,
+                    serial_number=serial_number_to_save,
                 )
                 if was_bound:
                     serial_note = (
@@ -1289,7 +1336,21 @@ def create_readings_router(
                 )
                 serial_note = "\n\n⚠️ Не удалось привязать серийный номер."
         learning_note = ""
-        was_corrected = result.reading.ocr_value != result.reading.confirmed_value
+        serial_changed = (
+            serial_was_corrected
+            and corrected_serial_number is not None
+            and (
+                recognized_serial_number is None
+                or not serial_numbers_match(
+                    recognized_serial_number,
+                    corrected_serial_number,
+                )
+            )
+        )
+        was_corrected = (
+            result.reading.ocr_value != result.reading.confirmed_value
+            or serial_changed
+        )
         if was_corrected and result.profile_updated:
             learning_note = (
                 "\n\n✅ Исправление сохранено. Для этого счётчика создан "
@@ -1357,7 +1418,7 @@ def create_readings_router(
         await callback.answer()
         await state.set_state(ReadingForm.photo_correction)
         await callback.message.answer(
-            "Введите правильное показание числом:",
+            "Сначала введите правильное показание числом:",
             reply_markup=cancel_keyboard(),
         )
 
@@ -1375,10 +1436,39 @@ def create_readings_router(
         except ValueError as exc:
             await message.answer(str(exc), reply_markup=cancel_keyboard())
             return
+        await state.update_data(corrected_photo_value=str(value))
+        data = await state.get_data()
+        recognized_serial_number = data.get("recognized_serial_number")
+        recognized_note = (
+            f"Сейчас распознано: {recognized_serial_number}."
+            if isinstance(recognized_serial_number, str) and recognized_serial_number
+            else "Серийный номер на фото не распознан."
+        )
+        await state.set_state(ReadingForm.photo_serial_correction)
+        await message.answer(
+            f"{recognized_note}\n\n"
+            "Отправьте правильный серийный номер или нажмите кнопку, "
+            "чтобы оставить текущий вариант.",
+            reply_markup=photo_serial_correction_keyboard(
+                recognized_serial_number
+                if isinstance(recognized_serial_number, str)
+                else None
+            ),
+        )
+
+    async def finish_stored_photo_correction(
+        message: Message,
+        state: FSMContext,
+        current_user: User,
+        *,
+        corrected_serial_number: str | None,
+        serial_was_corrected: bool,
+    ) -> None:
         data = await state.get_data()
         try:
             reading_id = UUID(str(data["reading_id"]))
             meter_id = UUID(str(data["meter_id"]))
+            value = parse_decimal(str(data["corrected_photo_value"]))
         except (KeyError, ValueError):
             await state.clear()
             await message.answer("Сценарий устарел.", reply_markup=main_menu_keyboard())
@@ -1390,6 +1480,55 @@ def create_readings_router(
             reading_id=reading_id,
             meter_id=meter_id,
             value=value,
+            corrected_serial_number=corrected_serial_number,
+            serial_was_corrected=serial_was_corrected,
+        )
+
+    @router.message(StateFilter(ReadingForm.photo_serial_correction))
+    async def corrected_photo_serial_number(
+        message: Message,
+        state: FSMContext,
+        current_user: User,
+    ) -> None:
+        if not message.text:
+            await message.answer(
+                "Введите серийный номер текстом или нажмите кнопку.",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+        serial_number = clean_serial_number(message.text)
+        if not serial_number:
+            await message.answer("Серийный номер не может быть пустым.")
+            return
+        if len(serial_number) > 100:
+            await message.answer("Серийный номер не должен быть длиннее 100 символов.")
+            return
+        await finish_stored_photo_correction(
+            message,
+            state,
+            current_user,
+            corrected_serial_number=serial_number,
+            serial_was_corrected=True,
+        )
+
+    @router.callback_query(
+        StateFilter(ReadingForm.photo_serial_correction),
+        ActionCallback.filter(F.action == "keep_photo_serial"),
+    )
+    async def keep_recognized_photo_serial(
+        callback: CallbackQuery,
+        state: FSMContext,
+        current_user: User,
+    ) -> None:
+        await callback.answer()
+        if not isinstance(callback.message, Message):
+            return
+        await finish_stored_photo_correction(
+            callback.message,
+            state,
+            current_user,
+            corrected_serial_number=None,
+            serial_was_corrected=False,
         )
 
     @router.callback_query(

@@ -9,6 +9,7 @@ from uuid import UUID
 
 from src.application.interfaces import OCRResult
 from src.config import Settings
+from src.domain.services import serial_numbers_match
 from src.infrastructure.ocr import (
     ImagePreprocessor,
     MeterReadingParser,
@@ -26,6 +27,8 @@ class FeedbackCase:
     detected_value: Decimal
     photo_path: str
     status: str
+    detected_serial_number: str | None = None
+    corrected_serial_number: str | None = None
 
 
 def response_rows(response: Any) -> list[dict[str, Any]]:
@@ -48,6 +51,8 @@ def feedback_case_from_row(row: dict[str, Any]) -> FeedbackCase:
         detected_value=Decimal(str(row["detected_value"])),
         photo_path=photo_path,
         status=str(row["status"]),
+        detected_serial_number=row.get("serial_number"),
+        corrected_serial_number=row.get("corrected_serial_number"),
     )
 
 
@@ -60,7 +65,10 @@ def load_feedback_cases(
 ) -> list[FeedbackCase]:
     query = (
         client.table("ocr_feedback")
-        .select("id,meter_id,corrected_value,detected_value,photo_path,status")
+        .select(
+            "id,meter_id,corrected_value,detected_value,photo_path,status,"
+            "serial_number,corrected_serial_number"
+        )
         .order("created_at")
         .limit(limit)
     )
@@ -144,7 +152,18 @@ def run_regression(
                 image_content,
                 mechanical_fraction_digits=profiles.get(case.meter_id),
             )
-            is_passed = current.reading == case.corrected_value
+            reading_passed = current.reading == case.corrected_value
+            serial_passed = (
+                case.corrected_serial_number is None
+                or (
+                    current.serial_number is not None
+                    and serial_numbers_match(
+                        current.serial_number,
+                        case.corrected_serial_number,
+                    )
+                )
+            )
+            is_passed = reading_passed and serial_passed
             if is_passed:
                 passed += 1
             results.append(
@@ -154,6 +173,9 @@ def run_regression(
                     "status": case.status,
                     "saved_detected_value": str(case.detected_value),
                     "expected_value": str(case.corrected_value),
+                    "expected_serial_number": case.corrected_serial_number,
+                    "reading_passed": reading_passed,
+                    "serial_passed": serial_passed,
                     "passed": is_passed,
                     "current_result": result_payload(current),
                 }
@@ -166,6 +188,7 @@ def run_regression(
                     "status": case.status,
                     "saved_detected_value": str(case.detected_value),
                     "expected_value": str(case.corrected_value),
+                    "expected_serial_number": case.corrected_serial_number,
                     "passed": False,
                     "error": f"{type(exc).__name__}: {exc}",
                 }

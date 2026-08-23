@@ -350,7 +350,7 @@ async def test_correction_learns_fraction_digits_only_for_its_meter() -> None:
         user_id=USER_ID,
         reading_id=recognized.reading.id,  # type: ignore[arg-type]
         value=Decimal("12.54"),
-        serial_number=recognized.serial_number,
+        detected_serial_number=recognized.serial_number,
         raw_text=recognized.raw_text,
         mechanical_digits=recognized.mechanical_digits,
     )
@@ -370,6 +370,34 @@ async def test_correction_learns_fraction_digits_only_for_its_meter() -> None:
 
     assert next_result.reading.ocr_value == Decimal("12.54")
     assert ocr.mechanical_fraction_digits == 2
+
+
+async def test_serial_only_correction_is_saved_as_feedback() -> None:
+    service, _, _, _, _, feedback = _service(
+        OCRResult(Decimal("125.4"), "WRONG-123456", 0.91, ["WRONG-123456"]),
+        _previous(),
+    )
+    recognized = await service.recognize_photo(
+        user_id=USER_ID,
+        meter_id=METER_ID,
+        image_content=b"jpeg",
+        captured_at=CAPTURED_AT,
+    )
+
+    result = await service.confirm(
+        user_id=USER_ID,
+        reading_id=recognized.reading.id,  # type: ignore[arg-type]
+        detected_serial_number=recognized.serial_number,
+        corrected_serial_number="N164701553",
+        raw_text=recognized.raw_text,
+    )
+
+    assert result.feedback_saved
+    assert not result.profile_updated
+    assert feedback.feedback is not None
+    assert feedback.feedback.serial_number == "WRONG-123456"
+    assert feedback.feedback.corrected_serial_number == "N164701553"
+    assert feedback.feedback.detected_value == feedback.feedback.corrected_value
 
 
 async def test_first_photo_reading_is_confirmed_as_baseline_without_charge() -> None:
