@@ -73,3 +73,10 @@ def test_parser_understands_ocr_variants_of_number_sign() -> None:
 
         assert result.reading == Decimal("3465.81")
         assert result.serial_number == "22297698"
+
+
+def test_parser_never_returns_marked_serial_as_reading() -> None:
+    result = MeterReadingParser().parse([OCRTextLine("No.22297698 2022r.", 0.92)])
+
+    assert result.reading is None
+    assert result.serial_number == "22297698"

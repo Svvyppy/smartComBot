@@ -65,6 +65,8 @@ class MeterReadingParser:
                     candidates.append(candidate)
 
         selected = max(candidates, key=lambda candidate: candidate.score, default=None)
+        if selected is not None and selected.score <= 0:
+            selected = None
         serial_number = self._extract_serial(lines)
         return OCRResult(
             reading=None if selected is None else selected.value,
