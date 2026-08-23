@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from src.application.dashboard import DashboardService
 from src.application.management import ManagementService
 from src.application.meters import MeterService
 from src.application.ocr import OCRDebugService, OCRExecutor
@@ -33,6 +34,7 @@ from src.infrastructure.supabase.storage import SupabaseImageStorage
 @dataclass(frozen=True, slots=True)
 class ApplicationServices:
     users: UserService
+    dashboard: DashboardService
     properties: PropertyService
     meters: MeterService
     management: ManagementService
@@ -95,6 +97,11 @@ def build_application(settings: Settings) -> ApplicationServices:
     )
     return ApplicationServices(
         users=users,
+        dashboard=DashboardService(
+            properties=property_repository,
+            meters=meter_repository,
+            readings=reading_repository,
+        ),
         properties=properties,
         meters=meters,
         management=ManagementService(

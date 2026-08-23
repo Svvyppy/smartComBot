@@ -86,6 +86,14 @@ class ReadingRepository(Protocol):
         user_id: UUID,
     ) -> list[str]: ...
 
+    async def list_confirmed_by_meter(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+        *,
+        limit: int = 2,
+    ) -> list[Reading]: ...
+
 
 class OCRFeedbackRepository(Protocol):
     async def add(self, feedback: OCRFeedback, user_id: UUID) -> OCRFeedback: ...

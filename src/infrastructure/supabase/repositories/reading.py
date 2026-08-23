@@ -114,3 +114,24 @@ class SupabaseReadingRepository(SupabaseRepository):
             for row in self._data(response)
             if isinstance((path := row.get("photo_path")), str) and path
         ]
+
+    async def list_confirmed_by_meter(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+        *,
+        limit: int = 2,
+    ) -> list[Reading]:
+        await self._require_meter_owned(meter_id, user_id)
+        safe_limit = max(1, min(limit, 100))
+        response = await self._run(
+            lambda: self._client.table("readings")
+            .select("*")
+            .eq("meter_id", str(meter_id))
+            .in_("status", ["confirmed", "manual"])
+            .not_.is_("confirmed_value", "null")
+            .order("captured_at", desc=True)
+            .limit(safe_limit)
+            .execute()
+        )
+        return [reading_from_row(row) for row in self._data(response)]
