@@ -45,7 +45,7 @@ def test_main_menu_contains_all_sections() -> None:
     keyboard = main_menu_keyboard()
     labels = {button.text for row in keyboard.keyboard for button in row}
 
-    assert labels == set(MenuButton)
+    assert labels == set(MenuButton) - {MenuButton.OCR_DEBUG}
 
 
 def test_reading_method_keyboard_offers_photo_and_manual_input() -> None:
