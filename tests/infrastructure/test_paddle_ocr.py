@@ -41,6 +41,11 @@ class FakeEngine:
         return [FakePage()]
 
 
+class FailingEngine:
+    def predict(self, input_image: ImageArray, **_: object) -> Iterable[object]:
+        raise RuntimeError("std::exception")
+
+
 class FakeMechanicalPage:
     def __init__(self, counter_text: str, serial_text: str) -> None:
         self.json = {
@@ -88,6 +93,30 @@ class FakeCounterRecognizer:
         assert all(image.ndim == 3 for image in input_image)
         assert batch_size == 1
         return self._results
+
+
+class FakeCellCounterRecognizer:
+    def predict(
+        self,
+        input_image: list[ImageArray],
+        *,
+        batch_size: int = 1,
+    ) -> Iterable[object]:
+        assert batch_size == 1
+        if len(input_image) == 2:
+            return [
+                FakeRecognitionResult("00272", 0.39),
+                FakeRecognitionResult("", 0.0),
+            ]
+        assert len(input_image) == 8
+        return [
+            FakeRecognitionResult(text, score)
+            for text, score in zip(
+                ["D", "0", "T", "2", "7", "91", "2", "9"],
+                [0.76, 0.58, 0.41, 0.88, 0.78, 0.91, 0.98, 0.43],
+                strict=True,
+            )
+        ]
 
 
 class FakeLCDDigitRecognizer:
@@ -172,6 +201,28 @@ def test_paddle_adapter_reuses_engine_and_parses_v3_result() -> None:
     assert factory_calls[0]["text_detection_model_name"] == "PP-OCRv5_mobile_det"
 
 
+def test_paddle_adapter_recreates_predictor_after_runtime_failure() -> None:
+    engines = [FailingEngine(), FakeEngine()]
+    factory_calls = 0
+
+    def factory(**_: object) -> FailingEngine | FakeEngine:
+        nonlocal factory_calls
+        engine = engines[factory_calls]
+        factory_calls += 1
+        return engine
+
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=factory,
+    )
+
+    result = service.recognize(_jpeg())
+
+    assert result.reading == Decimal("123.4")
+    assert factory_calls == 2
+
+
 def test_paddle_adapter_reports_received_and_expected_image_shape() -> None:
     service = PaddleOCRService(
         preprocessor=ImagePreprocessor(),
@@ -216,7 +267,7 @@ def test_paddle_adapter_reports_received_and_expected_image_shape() -> None:
             0.94,
             "1U",
             0.26,
-            Decimal("420.371"),
+            Decimal("420.3"),
             "OB 898047813",
         ),
     ],
@@ -250,6 +301,45 @@ def test_paddle_adapter_recovers_eight_wheel_counter_reading(
     assert result.serial_number == expected_serial
     assert len(recognizer_calls) == 1
     assert recognizer_calls[0]["model_name"] == "en_PP-OCRv5_mobile_rec"
+
+
+def test_paddle_adapter_reads_transitional_wheels_cell_by_cell() -> None:
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: FakeMechanicalEngine(
+            "0J01321791219",
+            "N164701553",
+        ),
+        counter_recognizer_factory=lambda **_: FakeCellCounterRecognizer(),
+    )
+
+    result = service.recognize(_jpeg())
+
+    assert result.reading == Decimal("127.929")
+    assert result.serial_number == "N164701553"
+
+
+def test_paddle_adapter_uses_tenths_for_ob_mechanical_meter() -> None:
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: FakeMechanicalEngine(
+            "66420728",
+            "OB 898047813",
+        ),
+        counter_recognizer_factory=lambda **_: FakeCounterRecognizer(
+            "8042073",
+            0.46,
+            "",
+            0.0,
+        ),
+    )
+
+    result = service.recognize(_jpeg())
+
+    assert result.reading == Decimal("420.7")
+    assert result.serial_number == "OB 898047813"
 
 
 def test_paddle_adapter_recognizes_complete_lcd_reading_on_expanded_crop() -> None:

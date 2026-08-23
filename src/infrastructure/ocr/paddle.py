@@ -32,7 +32,7 @@ class PaddleTextRecognizer(Protocol):
 EngineFactory = Callable[..., PaddleEngine]
 RecognizerFactory = Callable[..., PaddleTextRecognizer]
 
-_COUNTER_LINE = re.compile(r"^[\d\s.,:;-]+$")
+_COUNTER_LINE = re.compile(r"^[\d\s.,:;\-ODQILJZSB]+$", re.IGNORECASE)
 _EXPECTED_COUNTER_DIGITS = 8
 _COUNTER_FRACTION_DIGITS = 3
 _LCD_UNIT = re.compile(r"(?:k[bв][tтrр]|квт)", re.IGNORECASE)
@@ -141,6 +141,32 @@ class PaddleOCRService:
     ) -> OCRResult:
         """Recognize an already prepared image while reusing the loaded OCR engine."""
 
+        try:
+            return self._recognize_image_once(
+                image,
+                source_image=source_image,
+                previous_reading=previous_reading,
+                max_delta=max_delta,
+            )
+        except RuntimeError:
+            self._engine = None
+            self._counter_recognizer = None
+            return self._recognize_image_once(
+                image,
+                source_image=source_image,
+                previous_reading=previous_reading,
+                max_delta=max_delta,
+            )
+
+    def _recognize_image_once(
+        self,
+        image: ImageArray,
+        *,
+        source_image: ImageArray | None,
+        previous_reading: Decimal | None,
+        max_delta: Decimal | None,
+    ) -> OCRResult:
+
         engine_image = self._ensure_three_channels(image)
         regions = self._predict_regions(engine_image)
         lines = [region.line for region in regions]
@@ -152,6 +178,7 @@ class PaddleOCRService:
         counter = self._recognize_counter(
             self._ensure_three_channels(source_image) if source_image is not None else engine_image,
             regions,
+            parsed.serial_number,
         )
         if counter is None:
             counter = self._recognize_lcd(
@@ -279,6 +306,7 @@ class PaddleOCRService:
         self,
         source_image: ImageArray,
         regions: list[_OCRRegion],
+        serial_number: str | None,
     ) -> _CounterReading | None:
         candidates = [region for region in regions if self._is_counter_line(region)]
         if not candidates:
@@ -322,6 +350,17 @@ class PaddleOCRService:
         last_digits = self._digits(last_text)
         generic_digits = self._digits(region.line.text)
 
+        if serial_number is not None and serial_number.upper().startswith("OB"):
+            tenths_digits = self._recover_ob_tenths_digits(
+                direct_digits,
+                generic_digits,
+            )
+            if tenths_digits is not None:
+                return _CounterReading(
+                    value=Decimal(f"{tenths_digits[:-1]}.{tenths_digits[-1]}"),
+                    confidence=max(direct_confidence, region.line.confidence),
+                )
+
         digits: str | None = None
         confidence = 0.0
         if len(direct_digits) == _EXPECTED_COUNTER_DIGITS and direct_confidence >= 0.75:
@@ -339,11 +378,78 @@ class PaddleOCRService:
             digits = generic_digits
             confidence = region.line.confidence
         if digits is None:
+            cell_result = self._recognize_counter_cells(display)
+            if cell_result is not None:
+                digits, confidence = cell_result
+        if digits is None:
             return None
 
         integer = digits[:-_COUNTER_FRACTION_DIGITS]
         fraction = digits[-_COUNTER_FRACTION_DIGITS:]
         return _CounterReading(value=Decimal(f"{integer}.{fraction}"), confidence=confidence)
+
+    def _recognize_counter_cells(self, display: ImageArray) -> tuple[str, float] | None:
+        height, width = display.shape[:2]
+        cells: list[ImageArray] = []
+        for index in range(_EXPECTED_COUNTER_DIGITS):
+            x1 = int(width * index / _EXPECTED_COUNTER_DIGITS)
+            x2 = int(width * (index + 1) / _EXPECTED_COUNTER_DIGITS)
+            cell = display[int(height * 0.12) : int(height * 0.88), x1:x2]
+            if cell.size == 0:
+                return None
+            cells.append(self._add_white_border(cell, 20))
+        results = list(self._get_counter_recognizer().predict(cells, batch_size=1))
+        if len(results) != _EXPECTED_COUNTER_DIGITS:
+            return None
+
+        digits: list[str] = []
+        confidences: list[float] = []
+        for result in results:
+            text, confidence = self._extract_direct_result(result)
+            digit = self._single_counter_digit(text)
+            if digit is None or confidence < 0.2:
+                return None
+            digits.append(digit)
+            confidences.append(confidence)
+        return "".join(digits), min(confidences)
+
+    @staticmethod
+    def _single_counter_digit(text: str) -> str | None:
+        digits = PaddleOCRService._digits(text)
+        if len(digits) == 1:
+            return digits
+        if len(digits) == 2 and digits[1] == "1":
+            return digits[0]
+        normalized = text.strip().upper()
+        substitutions = {
+            "D": "0",
+            "O": "0",
+            "Q": "0",
+            "I": "1",
+            "L": "1",
+            "T": "1",
+            "|": "1",
+            "Z": "2",
+            "S": "5",
+            "G": "6",
+            "B": "8",
+        }
+        return substitutions.get(normalized)
+
+    @staticmethod
+    def _recover_ob_tenths_digits(
+        direct_digits: str,
+        generic_digits: str,
+    ) -> str | None:
+        if len(direct_digits) == 6:
+            return direct_digits
+        if len(direct_digits) == 7:
+            return direct_digits[1:-1].zfill(6)
+        if len(direct_digits) >= 8:
+            return direct_digits[:6]
+        if len(generic_digits) == 8:
+            return generic_digits[2:-2].zfill(6)
+        return None
 
     def _recognize_lcd(
         self,
@@ -585,7 +691,7 @@ class PaddleOCRService:
         if region.polygon is None or _COUNTER_LINE.fullmatch(region.line.text) is None:
             return False
         digit_count = len(PaddleOCRService._digits(region.line.text))
-        return _EXPECTED_COUNTER_DIGITS - 1 <= digit_count <= _EXPECTED_COUNTER_DIGITS + 2
+        return _EXPECTED_COUNTER_DIGITS - 1 <= digit_count <= _EXPECTED_COUNTER_DIGITS * 2
 
     @staticmethod
     def _digits(text: str) -> str:
