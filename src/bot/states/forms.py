@@ -19,6 +19,8 @@ class TariffForm(StatesGroup):
 class ReadingForm(StatesGroup):
     method = State()
     photo = State()
+    unassigned_photo = State()
+    photo_meter_selection = State()
     photo_confirmation = State()
     photo_correction = State()
     value = State()

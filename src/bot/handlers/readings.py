@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
 from uuid import UUID
@@ -14,10 +15,12 @@ from src.application.exceptions import (
     ReadingRejectedError,
     SuspiciousReadingError,
 )
+from src.application.interfaces import OCRResult
 from src.application.meters import MeterService
 from src.application.properties import PropertyService
 from src.application.readings import (
     ManualReadingResult,
+    PhotoMeterIdentification,
     PhotoReadingResult,
     PhotoReadingService,
     ReadingService,
@@ -29,7 +32,9 @@ from src.bot.keyboards.common import (
     cancel_keyboard,
     meters_keyboard,
     photo_confirmation_keyboard,
+    photo_meter_selection_keyboard,
     properties_keyboard,
+    reading_meters_keyboard,
     reading_method_keyboard,
     suspicious_reading_keyboard,
 )
@@ -117,12 +122,45 @@ def create_readings_router(
         callback_data: PropertyCallback,
         current_user: User,
     ) -> None:
-        await choose_meter(
-            callback,
-            callback_data,
-            current_user,
-            action="reading",
-            empty_text="У объекта нет активных счётчиков.",
+        await callback.answer()
+        if not isinstance(callback.message, Message):
+            return
+        assert current_user.id is not None
+        property_id = UUID(callback_data.property_id)
+        await properties.get(user_id=current_user.id, property_id=property_id)
+        items = await meters.list(user_id=current_user.id, property_id=property_id)
+        if not items:
+            await callback.message.answer("У объекта нет активных счётчиков.")
+            return
+        await callback.message.answer(
+            "Выберите счётчик или отправьте фото для автоматического определения:",
+            reply_markup=reading_meters_keyboard(callback_data.property_id, items),
+        )
+
+    @router.callback_query(PropertyCallback.filter(F.action == "photo_meter"))
+    async def start_unassigned_photo(
+        callback: CallbackQuery,
+        callback_data: PropertyCallback,
+        state: FSMContext,
+        current_user: User,
+    ) -> None:
+        await callback.answer()
+        if not isinstance(callback.message, Message):
+            return
+        assert current_user.id is not None
+        property_id = UUID(callback_data.property_id)
+        await properties.get(user_id=current_user.id, property_id=property_id)
+        items = await meters.list(user_id=current_user.id, property_id=property_id)
+        if not items:
+            await callback.message.answer("У объекта нет активных счётчиков.")
+            return
+        await state.clear()
+        await state.update_data(property_id=callback_data.property_id)
+        await state.set_state(ReadingForm.unassigned_photo)
+        await callback.message.answer(
+            "Отправьте фотографию счётчика. Я попробую найти серийный номер, "
+            "а если его не будет — предложу счётчик по прошлым показаниям.",
+            reply_markup=cancel_keyboard(),
         )
 
     @router.callback_query(PropertyCallback.filter(F.action == "history"))
@@ -307,6 +345,287 @@ def create_readings_router(
             f"{text}\n\nПопробуйте другое фото или введите показание вручную.",
             reply_markup=reading_method_keyboard(str(meter_id)),
         )
+
+    async def create_photo_preview(
+        message: Message,
+        state: FSMContext,
+        current_user: User,
+        *,
+        meter: Meter,
+        image_content: bytes,
+        captured_at: datetime,
+        ocr_result: OCRResult | None = None,
+    ) -> None:
+        if meter.id is None:
+            raise RuntimeError("Meter does not have an id")
+        assert current_user.id is not None
+        result = await photo_readings.recognize_photo(
+            user_id=current_user.id,
+            meter_id=meter.id,
+            image_content=image_content,
+            captured_at=captured_at,
+            ocr_result=ocr_result,
+        )
+        if result.reading.id is None:
+            raise RuntimeError("Saved recognized reading does not have an id")
+        await state.update_data(
+            meter_id=str(meter.id),
+            reading_id=str(result.reading.id),
+        )
+        await state.set_state(ReadingForm.photo_confirmation)
+        await message.answer(
+            recognition_text(meter, result),
+            reply_markup=photo_confirmation_keyboard(str(result.reading.id)),
+        )
+
+    def meter_identification_text(result: PhotoMeterIdentification) -> str:
+        assert result.ocr_result.reading is not None
+        lines = [
+            f"Распознано показание: {format_decimal(result.ocr_result.reading)}",
+            (
+                f"Серийный номер: {result.ocr_result.serial_number} (нет совпадения)"
+                if result.ocr_result.serial_number
+                else "Серийный номер: не распознан"
+            ),
+        ]
+        suggested = next(
+            (
+                candidate
+                for candidate in result.candidates
+                if result.suggested_meter is not None
+                and candidate.meter.id == result.suggested_meter.id
+            ),
+            None,
+        )
+        if suggested is not None and suggested.previous_reading is not None:
+            lines.extend(
+                [
+                    "",
+                    f"По прошлому показанию предполагаю: {suggested.meter.name}.",
+                    f"Предыдущее: {format_decimal(suggested.previous_reading)} "
+                    f"{unit_label(suggested.meter.unit)}",
+                    f"Ожидаемый расход: {format_decimal(suggested.delta or Decimal(0))} "
+                    f"{unit_label(suggested.meter.unit)}",
+                ]
+            )
+        lines.extend(["", "Выберите, какой это счётчик:"])
+        return "\n".join(lines)
+
+    @router.message(StateFilter(ReadingForm.unassigned_photo), HasPhoto())
+    async def identify_photo_meter(
+        message: Message,
+        state: FSMContext,
+        current_user: User,
+        bot: Bot,
+    ) -> None:
+        data = await state.get_data()
+        try:
+            property_id = UUID(str(data["property_id"]))
+        except (KeyError, ValueError):
+            await state.clear()
+            await message.answer("Сценарий устарел.", reply_markup=main_menu_keyboard())
+            return
+
+        assert message.photo
+        photo = message.photo[-1]
+        if photo.file_size is not None and photo.file_size > max_photo_bytes:
+            await message.answer(
+                "Файл слишком большой. Попробуйте другое фото.",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+
+        await message.answer("Фото получено. Распознаю показание и счётчик…")
+        destination = BytesIO()
+        await bot.download(photo, destination=destination)
+        image_content = destination.getvalue()
+        if len(image_content) > max_photo_bytes:
+            await message.answer(
+                "Файл слишком большой. Попробуйте другое фото.",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+
+        assert current_user.id is not None
+        try:
+            identification = await photo_readings.identify_meter(
+                user_id=current_user.id,
+                property_id=property_id,
+                image_content=image_content,
+            )
+        except (OCRReadingNotFoundError, ReadingRejectedError, ValueError) as exc:
+            await message.answer(
+                f"{exc}\n\nПопробуйте другое фото.",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+        except Exception:
+            logger.exception(
+                "Photo meter identification failed telegram_id=%s property_id=%s",
+                current_user.telegram_id,
+                property_id,
+            )
+            await message.answer(
+                "Не удалось обработать фотографию. Попробуйте другое фото.",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+
+        if identification.matched_meter is not None:
+            meter = identification.matched_meter
+            await message.answer(f"Счётчик определён по серийному номеру: {meter.name}.")
+            try:
+                await create_photo_preview(
+                    message,
+                    state,
+                    current_user,
+                    meter=meter,
+                    image_content=image_content,
+                    captured_at=message.date,
+                    ocr_result=identification.ocr_result,
+                )
+            except (OCRReadingNotFoundError, ReadingRejectedError, ValueError) as exc:
+                await message.answer(
+                    f"Показание не принято: {exc}\nПопробуйте другое фото.",
+                    reply_markup=cancel_keyboard(),
+                )
+            except ActiveTariffNotFoundError:
+                await state.clear()
+                await message.answer(
+                    "Для этого ресурса не настроен действующий тариф. "
+                    "Сначала откройте раздел «Тарифы».",
+                    reply_markup=main_menu_keyboard(),
+                )
+            except Exception:
+                logger.exception(
+                    "Matched photo save failed telegram_id=%s meter_id=%s",
+                    current_user.telegram_id,
+                    meter.id,
+                )
+                await message.answer(
+                    "Не удалось сохранить распознанное показание. Попробуйте другое фото.",
+                    reply_markup=cancel_keyboard(),
+                )
+            return
+
+        candidate_meters = [candidate.meter for candidate in identification.candidates]
+        candidate_ids = [str(meter.id) for meter in candidate_meters if meter.id is not None]
+        suggested_id = (
+            identification.suggested_meter.id
+            if identification.suggested_meter is not None
+            else None
+        )
+        await state.update_data(
+            photo_file_id=photo.file_id,
+            photo_captured_at=message.date.isoformat(),
+            ocr_reading=str(identification.ocr_result.reading),
+            ocr_serial_number=identification.ocr_result.serial_number,
+            ocr_confidence=identification.ocr_result.confidence,
+            ocr_raw_text=identification.ocr_result.raw_text,
+            candidate_meter_ids=candidate_ids,
+            suggested_meter_id=None if suggested_id is None else str(suggested_id),
+        )
+        await state.set_state(ReadingForm.photo_meter_selection)
+        await message.answer(
+            meter_identification_text(identification),
+            reply_markup=photo_meter_selection_keyboard(
+                candidate_meters,
+                suggested_meter_id=suggested_id,
+            ),
+        )
+
+    @router.message(StateFilter(ReadingForm.unassigned_photo))
+    async def unassigned_photo_expected(message: Message) -> None:
+        await message.answer(
+            "Отправьте фотографию как изображение.",
+            reply_markup=cancel_keyboard(),
+        )
+
+    @router.callback_query(
+        StateFilter(ReadingForm.photo_meter_selection),
+        MeterCallback.filter(F.action == "select_photo"),
+    )
+    async def select_photo_meter(
+        callback: CallbackQuery,
+        callback_data: MeterCallback,
+        state: FSMContext,
+        current_user: User,
+        bot: Bot,
+    ) -> None:
+        await callback.answer()
+        if not isinstance(callback.message, Message):
+            return
+        data = await state.get_data()
+        candidate_ids = data.get("candidate_meter_ids", [])
+        if callback_data.meter_id not in candidate_ids:
+            await state.clear()
+            await callback.message.answer(
+                "Выбор счётчика устарел. Начните заново.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        try:
+            meter_id = UUID(callback_data.meter_id)
+            captured_at = datetime.fromisoformat(str(data["photo_captured_at"]))
+            ocr_result = OCRResult(
+                reading=Decimal(str(data["ocr_reading"])),
+                serial_number=data.get("ocr_serial_number"),
+                confidence=float(data["ocr_confidence"]),
+                raw_text=list(data.get("ocr_raw_text", [])),
+            )
+            photo_file_id = str(data["photo_file_id"])
+        except (KeyError, TypeError, ValueError):
+            await state.clear()
+            await callback.message.answer(
+                "Выбор счётчика устарел. Начните заново.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+
+        assert current_user.id is not None
+        meter = await meters.get(user_id=current_user.id, meter_id=meter_id)
+        destination = BytesIO()
+        await bot.download(photo_file_id, destination=destination)
+        image_content = destination.getvalue()
+        if len(image_content) > max_photo_bytes:
+            await state.clear()
+            await callback.message.answer(
+                "Файл слишком большой. Начните передачу заново.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        try:
+            await create_photo_preview(
+                callback.message,
+                state,
+                current_user,
+                meter=meter,
+                image_content=image_content,
+                captured_at=captured_at,
+                ocr_result=ocr_result,
+            )
+        except (OCRReadingNotFoundError, ReadingRejectedError, ValueError) as exc:
+            await callback.message.answer(
+                f"Этот счётчик не подходит: {exc}\nВыберите другой счётчик."
+            )
+        except ActiveTariffNotFoundError:
+            await state.clear()
+            await callback.message.answer(
+                "Для этого ресурса не настроен действующий тариф. "
+                "Сначала откройте раздел «Тарифы».",
+                reply_markup=main_menu_keyboard(),
+            )
+        except Exception:
+            logger.exception(
+                "Selected photo meter save failed telegram_id=%s meter_id=%s",
+                current_user.telegram_id,
+                meter_id,
+            )
+            await state.clear()
+            await callback.message.answer(
+                "Не удалось сохранить показание. Начните передачу заново.",
+                reply_markup=main_menu_keyboard(),
+            )
 
     @router.message(StateFilter(ReadingForm.photo), HasPhoto())
     async def recognize_photo(

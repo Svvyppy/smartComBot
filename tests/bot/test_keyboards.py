@@ -11,13 +11,15 @@ from src.bot.keyboards.callbacks import (
 from src.bot.keyboards.common import (
     main_menu_keyboard,
     photo_confirmation_keyboard,
+    photo_meter_selection_keyboard,
+    reading_meters_keyboard,
     reading_method_keyboard,
     tariffs_keyboard,
     utility_keyboard,
 )
 from src.bot.texts import MenuButton
-from src.domain.entities import Property
-from src.domain.enums import UtilityType
+from src.domain.entities import Meter, Property
+from src.domain.enums import MeterUnit, UtilityType
 
 ID = UUID("10000000-0000-0000-0000-000000000001")
 
@@ -27,6 +29,7 @@ def test_callback_payloads_fit_telegram_limit() -> None:
         ActionCallback(action="add_property").pack(),
         PropertyCallback(action="add_meter", property_id=str(ID)).pack(),
         MeterCallback(action="confirm", meter_id=str(ID)).pack(),
+        MeterCallback(action="select_photo", meter_id=str(ID)).pack(),
         ReadingCallback(action="correct", reading_id=str(ID)).pack(),
         UtilityCallback(action="meter", utility_type=UtilityType.ELECTRICITY.value).pack(),
         TariffCallback(
@@ -72,3 +75,44 @@ def test_wastewater_is_a_tariff_but_not_a_physical_meter_type() -> None:
 
     assert "Настроить: Водоотведение" in tariff_labels
     assert "Водоотведение" not in meter_labels
+
+
+def test_reading_meters_keyboard_offers_photo_identification() -> None:
+    meter = Meter(
+        id=ID,
+        property_id=ID,
+        name="ГВС",
+        type=UtilityType.HOT_WATER,
+        unit=MeterUnit.CUBIC_METER,
+    )
+
+    keyboard = reading_meters_keyboard(str(ID), [meter])
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert labels == ["📷 Определить счётчик по фото", "Горячая вода — ГВС"]
+
+
+def test_photo_meter_selection_marks_suggestion() -> None:
+    suggested = Meter(
+        id=ID,
+        property_id=ID,
+        name="ГВС",
+        type=UtilityType.HOT_WATER,
+        unit=MeterUnit.CUBIC_METER,
+    )
+    other_id = UUID("20000000-0000-0000-0000-000000000002")
+    other = Meter(
+        id=other_id,
+        property_id=ID,
+        name="ХВС",
+        type=UtilityType.COLD_WATER,
+        unit=MeterUnit.CUBIC_METER,
+    )
+
+    keyboard = photo_meter_selection_keyboard(
+        [other, suggested],
+        suggested_meter_id=ID,
+    )
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert labels == ["⭐ Горячая вода — ГВС", "Холодная вода — ХВС", "Отмена"]

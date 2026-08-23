@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from uuid import UUID
 
 from aiogram.types import (
     InlineKeyboardButton,
@@ -130,6 +131,54 @@ def meters_keyboard(meters: Sequence[Meter], *, action: str) -> InlineKeyboardMa
             text=f"{utility_label(meter.type)} — {meter.name}",
             callback_data=MeterCallback(action=action, meter_id=str(meter.id)),
         )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def reading_meters_keyboard(
+    property_id: str,
+    meters: Sequence[Meter],
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="📷 Определить счётчик по фото",
+        callback_data=PropertyCallback(
+            action="photo_meter",
+            property_id=property_id,
+        ),
+    )
+    for meter in meters:
+        if meter.id is None:
+            continue
+        builder.button(
+            text=f"{utility_label(meter.type)} — {meter.name}",
+            callback_data=MeterCallback(action="reading", meter_id=str(meter.id)),
+        )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def photo_meter_selection_keyboard(
+    meters: Sequence[Meter],
+    *,
+    suggested_meter_id: UUID | None,
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    ordered = sorted(
+        (meter for meter in meters if meter.id is not None),
+        key=lambda meter: meter.id != suggested_meter_id,
+    )
+    for meter in ordered:
+        suggested = meter.id == suggested_meter_id
+        builder.button(
+            text=("⭐ " if suggested else "")
+            + f"{utility_label(meter.type)} — {meter.name}",
+            callback_data=MeterCallback(
+                action="select_photo",
+                meter_id=str(meter.id),
+            ),
+        )
+    builder.button(text="Отмена", callback_data=ActionCallback(action="cancel"))
     builder.adjust(1)
     return builder.as_markup()
 
