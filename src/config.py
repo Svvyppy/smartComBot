@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     supabase_storage_bucket: str = "meter-photos"
     log_level: str = "INFO"
 
+    mini_app_url: str = ""
+    mini_app_host: str = "0.0.0.0"
+    mini_app_port: int = Field(default=8080, ge=1, le=65535)
+    mini_app_auth_max_age_seconds: int = Field(default=86400, ge=60, le=604800)
+
     cold_water_max_monthly_delta: Decimal = Decimal("100")
     hot_water_max_monthly_delta: Decimal = Decimal("100")
     electricity_max_monthly_delta: Decimal = Decimal("3000")
@@ -60,6 +65,8 @@ class Settings(BaseSettings):
             missing.append("SUPABASE_SERVICE_ROLE_KEY")
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        if self.mini_app_url and not self.mini_app_url.startswith("https://"):
+            raise ValueError("MINI_APP_URL must use HTTPS")
 
 
 @lru_cache(maxsize=1)

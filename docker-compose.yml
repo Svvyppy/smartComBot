@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      - "127.0.0.1:${MINI_APP_PORT:-8080}:${MINI_APP_PORT:-8080}"
     volumes:
       - paddle_models:/models/paddle
       - ocr_debug:/data/ocr-debug
