@@ -123,6 +123,11 @@ async def test_api_requires_valid_telegram_init_data_and_returns_dashboard() -> 
         headers = {"X-Telegram-Init-Data": signed_init_data()}
         dashboard = await client.get("/api/v1/dashboard", headers=headers)
         assert dashboard.status == 200
+        assert dashboard.headers["X-Content-Type-Options"] == "nosniff"
+        assert "https://telegram.org" in dashboard.headers[
+            "Content-Security-Policy"
+        ]
+        assert dashboard.headers["Cache-Control"] == "no-store"
         payload = await dashboard.json()
         assert payload["summary"]["meter_count"] == 1
         assert payload["properties"][0]["meters"][0]["latest_value"] == "127.929"

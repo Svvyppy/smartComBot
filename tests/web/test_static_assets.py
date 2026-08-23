@@ -6,7 +6,7 @@ STATIC_ROOT = Path("src/web/static")
 def test_mini_app_page_loads_telegram_sdk_and_dashboard_assets() -> None:
     html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
 
-    assert "https://telegram.org/js/telegram-web-app.js" in html
+    assert "https://telegram.org/js/telegram-web-app.js?63" in html
     assert "/miniapp/static/styles.css" in html
     assert "/miniapp/static/app.js" in html
     assert 'id="summary"' in html

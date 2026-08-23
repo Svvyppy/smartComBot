@@ -26,6 +26,20 @@ from src.web.auth import MiniAppAuthError, validate_init_data
 logger = logging.getLogger(__name__)
 STATIC_ROOT = Path(__file__).with_name("static")
 CURRENT_USER_KEY = web.RequestKey("current_user", User)
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "script-src 'self' https://telegram.org",
+        "style-src 'self'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "font-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors https://telegram.org https://*.telegram.org",
+    )
+)
 
 
 class PropertyPayload(BaseModel):
@@ -179,6 +193,10 @@ def create_mini_app(
         response = await handler(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
         response.headers["Cache-Control"] = (
             "no-store" if request.path.startswith("/api/") else "public, max-age=300"
         )
