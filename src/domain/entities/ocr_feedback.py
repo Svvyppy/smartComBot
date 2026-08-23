@@ -13,6 +13,7 @@ class OCRFeedback:
     corrected_value: Decimal
     raw_text: tuple[str, ...] = ()
     serial_number: str | None = None
+    corrected_serial_number: str | None = None
     mechanical_digits: str | None = None
     photo_path: str | None = None
     status: str = "pending"

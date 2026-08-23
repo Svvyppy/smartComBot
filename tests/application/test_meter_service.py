@@ -51,6 +51,20 @@ class FakeMeterRepository:
             self.updates += 1
         return meter
 
+    async def set_serial_number(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+        serial_number: str,
+    ) -> Meter:
+        meter = await self.get_owned(meter_id, user_id)
+        assert meter is not None
+        meter = replace(meter, serial_number=serial_number)
+        index = next(index for index, item in enumerate(self.meters) if item.id == meter_id)
+        self.meters[index] = meter
+        self.updates += 1
+        return meter
+
 
 def _meter(
     meter_id: UUID = METER_ID,
@@ -95,7 +109,21 @@ async def test_existing_serial_number_is_never_overwritten() -> None:
 
     assert not was_bound
     assert meter.serial_number == "22297698"
-    assert repository.updates == 0
+
+
+async def test_explicit_serial_correction_overwrites_existing_number() -> None:
+    repository = FakeMeterRepository([_meter(serial_number="22297698")])
+    service = MeterService(repository)  # type: ignore[arg-type]
+
+    meter, was_changed = await service.set_serial_number(
+        user_id=USER_ID,
+        meter_id=METER_ID,
+        serial_number=" n164701553 ",
+    )
+
+    assert was_changed
+    assert meter.serial_number == "N164701553"
+    assert repository.updates == 1
 
 
 async def test_serial_number_cannot_be_bound_to_two_meters() -> None:

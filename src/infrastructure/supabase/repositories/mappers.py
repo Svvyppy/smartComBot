@@ -109,6 +109,7 @@ def ocr_feedback_from_row(row: dict[str, Any]) -> OCRFeedback:
         detected_value=detected_value,
         corrected_value=corrected_value,
         serial_number=row.get("serial_number"),
+        corrected_serial_number=row.get("corrected_serial_number"),
         raw_text=tuple(raw_text),
         mechanical_digits=row.get("mechanical_digits"),
         photo_path=row.get("photo_path"),

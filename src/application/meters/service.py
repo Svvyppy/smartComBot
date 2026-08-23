@@ -77,9 +77,52 @@ class MeterService:
         if meter.serial_number:
             return meter, False
 
+        cleaned = await self._validated_serial_number(
+            user_id=user_id,
+            meter=meter,
+            serial_number=serial_number,
+        )
+        updated = await self._meters.set_serial_number_if_missing(
+            meter_id,
+            user_id,
+            cleaned,
+        )
+        return updated, updated.serial_number == cleaned
+
+    async def set_serial_number(
+        self,
+        *,
+        user_id: UUID,
+        meter_id: UUID,
+        serial_number: str,
+    ) -> tuple[Meter, bool]:
+        meter = await self.get(user_id=user_id, meter_id=meter_id)
+        cleaned = await self._validated_serial_number(
+            user_id=user_id,
+            meter=meter,
+            serial_number=serial_number,
+        )
+        if meter.serial_number and serial_numbers_match(meter.serial_number, cleaned):
+            return meter, False
+        updated = await self._meters.set_serial_number(
+            meter_id,
+            user_id,
+            cleaned,
+        )
+        return updated, True
+
+    async def _validated_serial_number(
+        self,
+        *,
+        user_id: UUID,
+        meter: Meter,
+        serial_number: str,
+    ) -> str:
         cleaned = clean_serial_number(serial_number)
         if not cleaned:
             raise ValueError("Serial number cannot be empty")
+        if len(cleaned) > 100:
+            raise ValueError("Serial number cannot be longer than 100 characters")
         siblings = await self.list(
             user_id=user_id,
             property_id=meter.property_id,
@@ -94,9 +137,4 @@ class MeterService:
                 raise ValueError(
                     f"Серийный номер уже привязан к счётчику «{sibling.name}»."
                 )
-        updated = await self._meters.set_serial_number_if_missing(
-            meter_id,
-            user_id,
-            cleaned,
-        )
-        return updated, updated.serial_number == cleaned
+        return cleaned

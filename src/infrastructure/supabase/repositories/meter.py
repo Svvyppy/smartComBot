@@ -61,6 +61,24 @@ class SupabaseMeterRepository(SupabaseRepository):
             raise RuntimeError("Meter disappeared while setting its serial number")
         return meter
 
+    async def set_serial_number(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+        serial_number: str,
+    ) -> Meter:
+        await self._require_meter_owned(meter_id, user_id)
+        response = await self._run(
+            lambda: self._client.table("meters")
+            .update({"serial_number": serial_number})
+            .eq("id", str(meter_id))
+            .execute()
+        )
+        row = self._first(response)
+        if row is None:
+            raise RuntimeError("Supabase did not return the updated meter")
+        return meter_from_row(row)
+
     async def list_by_property(
         self,
         property_id: UUID,

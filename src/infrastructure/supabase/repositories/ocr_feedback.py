@@ -22,6 +22,7 @@ class SupabaseOCRFeedbackRepository(SupabaseRepository):
             "detected_value": str(feedback.detected_value),
             "corrected_value": str(feedback.corrected_value),
             "serial_number": feedback.serial_number,
+            "corrected_serial_number": feedback.corrected_serial_number,
             "raw_text": list(feedback.raw_text),
             "mechanical_digits": feedback.mechanical_digits,
             "photo_path": feedback.photo_path,
