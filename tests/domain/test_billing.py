@@ -41,3 +41,20 @@ def test_rejects_decreasing_reading(service: BillingService) -> None:
     with pytest.raises(InvalidReadingError):
         service.calculate(Decimal("10"), Decimal("9.99"), Decimal("8"))
 
+
+def test_calculates_wastewater_from_cold_and_hot_water_consumption(
+    service: BillingService,
+) -> None:
+    result = service.calculate_wastewater(
+        cold_water_consumption=Decimal("4.25"),
+        hot_water_consumption=Decimal("2.5"),
+        price=Decimal("35.72"),
+    )
+
+    assert result.consumption == Decimal("6.75")
+    assert result.amount == Decimal("241.11")
+
+
+def test_rejects_negative_water_consumption_for_wastewater(service: BillingService) -> None:
+    with pytest.raises(InvalidReadingError):
+        service.calculate_wastewater(Decimal("-1"), Decimal("2"), Decimal("35.72"))

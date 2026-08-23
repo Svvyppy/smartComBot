@@ -27,3 +27,15 @@ class Charge:
     amount: Decimal
     id: UUID | None = None
     created_at: datetime | None = None
+
+
+@dataclass(slots=True, kw_only=True)
+class WastewaterCharge:
+    billing_period_id: UUID | None
+    cold_water_consumption: Decimal
+    hot_water_consumption: Decimal
+    consumption: Decimal
+    tariff_price: Decimal
+    amount: Decimal
+    id: UUID | None = None
+    created_at: datetime | None = None

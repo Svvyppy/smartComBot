@@ -160,6 +160,7 @@ def tariffs_keyboard(property_: Property) -> InlineKeyboardMarkup:
     for utility_type in (
         UtilityType.COLD_WATER,
         UtilityType.HOT_WATER,
+        UtilityType.WASTEWATER,
         UtilityType.ELECTRICITY,
     ):
         builder.button(

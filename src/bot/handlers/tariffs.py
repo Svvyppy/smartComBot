@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 DISPLAYED_UTILITY_TYPES = (
     UtilityType.COLD_WATER,
     UtilityType.HOT_WATER,
+    UtilityType.WASTEWATER,
     UtilityType.ELECTRICITY,
 )
 

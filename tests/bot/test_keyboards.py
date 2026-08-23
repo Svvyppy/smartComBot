@@ -12,8 +12,11 @@ from src.bot.keyboards.common import (
     main_menu_keyboard,
     photo_confirmation_keyboard,
     reading_method_keyboard,
+    tariffs_keyboard,
+    utility_keyboard,
 )
 from src.bot.texts import MenuButton
+from src.domain.entities import Property
 from src.domain.enums import UtilityType
 
 ID = UUID("10000000-0000-0000-0000-000000000001")
@@ -54,3 +57,18 @@ def test_photo_confirmation_keyboard_has_all_decisions() -> None:
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
 
     assert labels == ["✅ Подтвердить", "✏️ Исправить", "Отмена"]
+
+
+def test_wastewater_is_a_tariff_but_not_a_physical_meter_type() -> None:
+    property_ = Property(id=ID, user_id=ID, name="Квартира")
+    tariff_labels = [
+        button.text for row in tariffs_keyboard(property_).inline_keyboard for button in row
+    ]
+    meter_labels = [
+        button.text
+        for row in utility_keyboard(action="meter").inline_keyboard
+        for button in row
+    ]
+
+    assert "Настроить: Водоотведение" in tariff_labels
+    assert "Водоотведение" not in meter_labels

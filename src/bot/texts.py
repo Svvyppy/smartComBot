@@ -16,6 +16,7 @@ class MenuButton(StrEnum):
 UTILITY_LABELS: dict[UtilityType, str] = {
     UtilityType.COLD_WATER: "Холодная вода",
     UtilityType.HOT_WATER: "Горячая вода",
+    UtilityType.WASTEWATER: "Водоотведение",
     UtilityType.ELECTRICITY: "Электричество",
     UtilityType.GAS: "Газ",
     UtilityType.HEATING: "Отопление",

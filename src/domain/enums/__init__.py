@@ -4,6 +4,7 @@ from enum import StrEnum
 class UtilityType(StrEnum):
     COLD_WATER = "cold_water"
     HOT_WATER = "hot_water"
+    WASTEWATER = "wastewater"
     ELECTRICITY = "electricity"
     GAS = "gas"
     HEATING = "heating"
@@ -42,4 +43,3 @@ __all__ = [
     "TariffZone",
     "UtilityType",
 ]
-

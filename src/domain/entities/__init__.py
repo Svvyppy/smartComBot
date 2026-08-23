@@ -1,4 +1,4 @@
-from src.domain.entities.billing import BillingPeriod, Charge
+from src.domain.entities.billing import BillingPeriod, Charge, WastewaterCharge
 from src.domain.entities.meter import Meter
 from src.domain.entities.property import Property
 from src.domain.entities.reading import Reading
@@ -14,5 +14,5 @@ __all__ = [
     "TariffPlan",
     "TariffRate",
     "User",
+    "WastewaterCharge",
 ]
-

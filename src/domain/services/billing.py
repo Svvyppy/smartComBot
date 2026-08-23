@@ -32,3 +32,16 @@ class BillingService:
         amount = (consumption * price).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
         return BillingResult(consumption=consumption, amount=amount)
 
+    def calculate_wastewater(
+        self,
+        cold_water_consumption: Decimal,
+        hot_water_consumption: Decimal,
+        price: Decimal,
+    ) -> BillingResult:
+        if cold_water_consumption < 0 or hot_water_consumption < 0:
+            raise InvalidReadingError("Water consumption cannot be negative")
+        return self.calculate(
+            Decimal("0"),
+            cold_water_consumption + hot_water_consumption,
+            price,
+        )
