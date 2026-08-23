@@ -44,6 +44,8 @@ def result_payload(result: OCRResult) -> dict[str, object]:
         "serial_number": result.serial_number,
         "confidence": result.confidence,
         "raw_text": result.raw_text,
+        "mechanical_digits": result.mechanical_digits,
+        "mechanical_fraction_digits": result.mechanical_fraction_digits,
     }
 
 
