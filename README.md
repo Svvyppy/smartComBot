@@ -104,6 +104,7 @@ Service Role Key остаётся только внутри backend-контей
 3. Добавьте в `.env` публичный адрес и порт:
 
    ```dotenv
+   MINI_APP_ENABLED=true
    MINI_APP_URL=https://meters.example.com/miniapp/
    MINI_APP_HOST=0.0.0.0
    MINI_APP_PORT=8080
@@ -113,10 +114,54 @@ Service Role Key остаётся только внутри backend-контей
    `https://meters.example.com/healthz`.
 
 После перезапуска бот установит системную кнопку меню «Дашборд», добавит команду
-`/app` и покажет кнопку Mini App в ответе на `/start`. Если `MINI_APP_URL`
-оставлен пустым, встроенный HTTP-сервер и кнопки Mini App не включаются. Compose
-публикует его порт только на `127.0.0.1`, поэтому доступ снаружи идёт через
+`/app` и покажет кнопку Mini App в ответе на `/start`. `MINI_APP_ENABLED=true`
+запускает встроенный HTTP-сервер, даже если публичный адрес пока неизвестен;
+кнопки появляются только после заполнения `MINI_APP_URL`. Если URL уже задан,
+сервер запускается и без отдельного флага для обратной совместимости. Compose
+публикует порт только на `127.0.0.1`, поэтому доступ снаружи идёт через
 HTTPS-прокси.
+
+### Временный Cloudflare Quick Tunnel
+
+Для запуска без собственного домена сначала оставьте `MINI_APP_URL` пустым и
+включите локальный сервер:
+
+```dotenv
+MINI_APP_ENABLED=true
+MINI_APP_URL=
+```
+
+Пересоздайте контейнер и убедитесь, что сервер отвечает:
+
+```bash
+docker compose up --build -d app
+curl http://127.0.0.1:8080/healthz
+```
+
+Запустите `cloudflared` непосредственно на Raspberry Pi и не закрывайте этот
+процесс:
+
+```bash
+cloudflared tunnel --url http://localhost:8080
+```
+
+Из вывода скопируйте адрес вида
+`https://random-words.trycloudflare.com`. Добавьте к нему путь `/miniapp/`,
+запишите результат в `.env` и пересоздайте только контейнер приложения:
+
+```dotenv
+MINI_APP_URL=https://random-words.trycloudflare.com/miniapp/
+```
+
+```bash
+docker compose up -d --force-recreate app
+```
+
+После этого `/start` и `/app` будут открывать временный адрес. При каждом
+перезапуске `cloudflared` Quick Tunnel получает новый URL, поэтому значение в
+`.env` нужно обновить и ещё раз пересоздать контейнер. Cloudflare позиционирует
+Quick Tunnel как режим для тестирования без гарантии доступности; для постоянной
+эксплуатации понадобится именованный туннель или собственный HTTPS-домен.
 
 ## Локальный запуск
 

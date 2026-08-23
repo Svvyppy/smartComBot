@@ -24,7 +24,7 @@ async def run() -> None:
     services = build_application(settings)
 
     mini_app_runner = None
-    if settings.mini_app_url:
+    if settings.mini_app_server_enabled:
         mini_app_runner = await start_mini_app_server(
             settings,
             users=services.users,
@@ -37,7 +37,7 @@ async def run() -> None:
             "Mini App server listening on %s:%s public_url=%s",
             settings.mini_app_host,
             settings.mini_app_port,
-            settings.mini_app_url,
+            settings.mini_app_url or "not configured yet",
         )
 
     dispatcher = Dispatcher()
@@ -56,17 +56,17 @@ async def run() -> None:
         logger.info("Starting utility bot with long polling")
         async with Bot(token=settings.bot_token.get_secret_value()) as bot:
             commands = [
-                    BotCommand(command="start", description="Главное меню"),
-                    BotCommand(command="properties", description="Объекты"),
-                    BotCommand(command="meters", description="Счётчики"),
-                    BotCommand(command="add_meter", description="Добавить счётчик"),
-                    BotCommand(command="tariffs", description="Тарифы"),
-                    BotCommand(command="readings", description="Передать показания"),
-                    BotCommand(command="history", description="История показаний"),
-                    BotCommand(command="ocr_debug", description="Отладка распознавания фото"),
-                    BotCommand(command="help", description="Помощь"),
-                    BotCommand(command="cancel", description="Отменить ввод"),
-                ]
+                BotCommand(command="start", description="Главное меню"),
+                BotCommand(command="properties", description="Объекты"),
+                BotCommand(command="meters", description="Счётчики"),
+                BotCommand(command="add_meter", description="Добавить счётчик"),
+                BotCommand(command="tariffs", description="Тарифы"),
+                BotCommand(command="readings", description="Передать показания"),
+                BotCommand(command="history", description="История показаний"),
+                BotCommand(command="ocr_debug", description="Отладка распознавания фото"),
+                BotCommand(command="help", description="Помощь"),
+                BotCommand(command="cancel", description="Отменить ввод"),
+            ]
             if settings.mini_app_url:
                 commands.insert(1, BotCommand(command="app", description="Открыть дашборд"))
                 await bot.set_chat_menu_button(

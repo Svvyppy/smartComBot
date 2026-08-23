@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     supabase_storage_bucket: str = "meter-photos"
     log_level: str = "INFO"
 
+    mini_app_enabled: bool = False
     mini_app_url: str = ""
     mini_app_host: str = "0.0.0.0"
     mini_app_port: int = Field(default=8080, ge=1, le=65535)
@@ -54,6 +55,11 @@ class Settings(BaseSettings):
             UtilityType.HOT_WATER: self.hot_water_max_monthly_delta,
             UtilityType.ELECTRICITY: self.electricity_max_monthly_delta,
         }
+
+    @property
+    def mini_app_server_enabled(self) -> bool:
+        """Start the local server before a temporary public URL is known."""
+        return self.mini_app_enabled or bool(self.mini_app_url)
 
     def validate_runtime_secrets(self) -> None:
         missing: list[str] = []
