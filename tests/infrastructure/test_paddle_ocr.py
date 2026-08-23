@@ -318,6 +318,8 @@ def test_paddle_adapter_reads_transitional_wheels_cell_by_cell() -> None:
 
     assert result.reading == Decimal("127.929")
     assert result.serial_number == "N164701553"
+    assert result.mechanical_digits == "00127929"
+    assert result.mechanical_fraction_digits == 3
 
 
 def test_paddle_adapter_uses_tenths_for_ob_mechanical_meter() -> None:
@@ -340,6 +342,31 @@ def test_paddle_adapter_uses_tenths_for_ob_mechanical_meter() -> None:
 
     assert result.reading == Decimal("420.7")
     assert result.serial_number == "OB 898047813"
+    assert result.mechanical_digits == "004207"
+    assert result.mechanical_fraction_digits == 1
+
+
+def test_paddle_adapter_applies_meter_specific_fraction_digits() -> None:
+    service = PaddleOCRService(
+        preprocessor=ImagePreprocessor(PreprocessingConfig(max_dimension=1000)),
+        parser=MeterReadingParser(),
+        engine_factory=lambda **_: FakeMechanicalEngine(
+            "00127:042",
+            "N164701553",
+        ),
+        counter_recognizer_factory=lambda **_: FakeCounterRecognizer(
+            "00127042",
+            0.83,
+            "2",
+            0.61,
+        ),
+    )
+
+    result = service.recognize(_jpeg(), mechanical_fraction_digits=2)
+
+    assert result.reading == Decimal("1270.42")
+    assert result.mechanical_digits == "00127042"
+    assert result.mechanical_fraction_digits == 2
 
 
 def test_paddle_adapter_recognizes_complete_lcd_reading_on_expanded_crop() -> None:

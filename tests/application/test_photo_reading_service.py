@@ -141,6 +141,7 @@ class FakeOCRExecutor:
         *,
         previous_reading: Decimal | None = None,
         max_delta: Decimal | None = None,
+        mechanical_fraction_digits: int | None = None,
     ) -> OCRResult:
         self.previous_reading = previous_reading
         self.max_delta = max_delta

@@ -19,6 +19,7 @@ class OCRExecutor:
         *,
         previous_reading: Decimal | None = None,
         max_delta: Decimal | None = None,
+        mechanical_fraction_digits: int | None = None,
     ) -> OCRResult:
         async with self._semaphore:
             return await asyncio.to_thread(
@@ -26,4 +27,5 @@ class OCRExecutor:
                 image_content,
                 previous_reading=previous_reading,
                 max_delta=max_delta,
+                mechanical_fraction_digits=mechanical_fraction_digits,
             )

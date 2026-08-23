@@ -15,6 +15,8 @@ class OCRResult:
     serial_number: str | None
     confidence: float
     raw_text: list[str]
+    mechanical_digits: str | None = None
+    mechanical_fraction_digits: int | None = None
 
 
 class SynchronousOCR(Protocol):
@@ -24,4 +26,5 @@ class SynchronousOCR(Protocol):
         *,
         previous_reading: Decimal | None = None,
         max_delta: Decimal | None = None,
+        mechanical_fraction_digits: int | None = None,
     ) -> OCRResult: ...

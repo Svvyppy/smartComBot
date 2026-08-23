@@ -53,6 +53,8 @@ class _OCRRegion:
 class _CounterReading:
     value: Decimal
     confidence: float
+    mechanical_digits: str | None = None
+    mechanical_fraction_digits: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +124,7 @@ class PaddleOCRService:
         *,
         previous_reading: Decimal | None = None,
         max_delta: Decimal | None = None,
+        mechanical_fraction_digits: int | None = None,
     ) -> OCRResult:
         color_image, image = self._preprocessor.process_with_color(image_content)
         return self.recognize_image(
@@ -129,6 +132,7 @@ class PaddleOCRService:
             source_image=color_image,
             previous_reading=previous_reading,
             max_delta=max_delta,
+            mechanical_fraction_digits=mechanical_fraction_digits,
         )
 
     def recognize_image(
@@ -138,6 +142,7 @@ class PaddleOCRService:
         source_image: ImageArray | None = None,
         previous_reading: Decimal | None = None,
         max_delta: Decimal | None = None,
+        mechanical_fraction_digits: int | None = None,
     ) -> OCRResult:
         """Recognize an already prepared image while reusing the loaded OCR engine."""
 
@@ -147,6 +152,7 @@ class PaddleOCRService:
                 source_image=source_image,
                 previous_reading=previous_reading,
                 max_delta=max_delta,
+                mechanical_fraction_digits=mechanical_fraction_digits,
             )
         except RuntimeError:
             self._engine = None
@@ -156,6 +162,7 @@ class PaddleOCRService:
                 source_image=source_image,
                 previous_reading=previous_reading,
                 max_delta=max_delta,
+                mechanical_fraction_digits=mechanical_fraction_digits,
             )
 
     def _recognize_image_once(
@@ -165,6 +172,7 @@ class PaddleOCRService:
         source_image: ImageArray | None,
         previous_reading: Decimal | None,
         max_delta: Decimal | None,
+        mechanical_fraction_digits: int | None,
     ) -> OCRResult:
 
         engine_image = self._ensure_three_channels(image)
@@ -179,6 +187,7 @@ class PaddleOCRService:
             self._ensure_three_channels(source_image) if source_image is not None else engine_image,
             regions,
             parsed.serial_number,
+            mechanical_fraction_digits,
         )
         if counter is None:
             counter = self._recognize_lcd(
@@ -194,6 +203,8 @@ class PaddleOCRService:
             serial_number=parsed.serial_number,
             confidence=counter.confidence,
             raw_text=parsed.raw_text,
+            mechanical_digits=counter.mechanical_digits,
+            mechanical_fraction_digits=counter.mechanical_fraction_digits,
         )
 
     def _predict_regions(self, image: ImageArray) -> list[_OCRRegion]:
@@ -307,6 +318,7 @@ class PaddleOCRService:
         source_image: ImageArray,
         regions: list[_OCRRegion],
         serial_number: str | None,
+        mechanical_fraction_digits: int | None,
     ) -> _CounterReading | None:
         candidates = [region for region in regions if self._is_counter_line(region)]
         if not candidates:
@@ -356,9 +368,16 @@ class PaddleOCRService:
                 generic_digits,
             )
             if tenths_digits is not None:
+                fraction_digits = (
+                    1
+                    if mechanical_fraction_digits is None
+                    else mechanical_fraction_digits
+                )
                 return _CounterReading(
-                    value=Decimal(f"{tenths_digits[:-1]}.{tenths_digits[-1]}"),
+                    value=self._decimal_from_digits(tenths_digits, fraction_digits),
                     confidence=max(direct_confidence, region.line.confidence),
+                    mechanical_digits=tenths_digits,
+                    mechanical_fraction_digits=fraction_digits,
                 )
 
         digits: str | None = None
@@ -384,9 +403,27 @@ class PaddleOCRService:
         if digits is None:
             return None
 
-        integer = digits[:-_COUNTER_FRACTION_DIGITS]
-        fraction = digits[-_COUNTER_FRACTION_DIGITS:]
-        return _CounterReading(value=Decimal(f"{integer}.{fraction}"), confidence=confidence)
+        fraction_digits = (
+            _COUNTER_FRACTION_DIGITS
+            if mechanical_fraction_digits is None
+            else mechanical_fraction_digits
+        )
+        return _CounterReading(
+            value=self._decimal_from_digits(digits, fraction_digits),
+            confidence=confidence,
+            mechanical_digits=digits,
+            mechanical_fraction_digits=fraction_digits,
+        )
+
+    @staticmethod
+    def _decimal_from_digits(digits: str, fraction_digits: int) -> Decimal:
+        if not 0 <= fraction_digits <= 6:
+            raise ValueError("mechanical_fraction_digits must be between 0 and 6")
+        if fraction_digits == 0:
+            return Decimal(digits)
+        integer = digits[:-fraction_digits] or "0"
+        fraction = digits[-fraction_digits:]
+        return Decimal(f"{integer}.{fraction}")
 
     def _recognize_counter_cells(self, display: ImageArray) -> tuple[str, float] | None:
         height, width = display.shape[:2]

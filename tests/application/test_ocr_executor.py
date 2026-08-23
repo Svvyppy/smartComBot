@@ -15,6 +15,7 @@ class ThreadRecordingOCR:
         *,
         previous_reading: Decimal | None = None,
         max_delta: Decimal | None = None,
+        mechanical_fraction_digits: int | None = None,
     ) -> OCRResult:
         self.thread_id = threading.get_ident()
         return OCRResult(Decimal("12.3"), None, 0.9, ["12.3"])
