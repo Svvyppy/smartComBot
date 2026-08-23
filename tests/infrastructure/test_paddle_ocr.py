@@ -117,9 +117,9 @@ class FakeLCDEngine:
         return [page]
 
 
-def _lcd_source_page(reading: str) -> FakeLCDPage:
+def _lcd_source_page(reading: str, unit: str = "KBTU") -> FakeLCDPage:
     return FakeLCDPage(
-        ["KBTU", reading, "Ne.22297698"],
+        [unit, reading, "Ne.22297698"],
         [0.72, 0.82, 0.91],
         [
             [[450, 150], [550, 150], [550, 180], [450, 180]],
@@ -239,7 +239,7 @@ def test_paddle_adapter_recovers_eight_wheel_counter_reading(
 def test_paddle_adapter_recognizes_complete_lcd_reading_on_expanded_crop() -> None:
     engine = FakeLCDEngine(
         [
-            _lcd_source_page("346"),
+            _lcd_source_page("346", unit="KBrou"),
             FakeLCDPage(["3465.81"], [0.87]),
         ]
     )
