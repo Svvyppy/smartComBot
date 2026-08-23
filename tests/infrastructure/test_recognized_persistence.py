@@ -57,6 +57,7 @@ class RpcQuery:
                     "amount": self.payload["p_amount"],
                     "created_at": captured,
                 },
+                "wastewater_charge": None,
             }
         )
 
@@ -86,7 +87,7 @@ async def test_confirmed_ocr_reading_uses_atomic_rpc() -> None:
         captured_at=CAPTURED_AT,
     )
 
-    saved, period, charge = await persistence.confirm(
+    saved, period, charge, wastewater_charge = await persistence.confirm(
         reading=reading,
         period=BillingPeriod(property_id=PROPERTY_ID, year=2026, month=8),
         charge=Charge(
@@ -98,14 +99,17 @@ async def test_confirmed_ocr_reading_uses_atomic_rpc() -> None:
             tariff_price=Decimal("8.25"),
             amount=Decimal("198.00"),
         ),
+        wastewater_tariff_price=None,
         user_id=USER_ID,
     )
 
     assert client.function_name == "confirm_recognized_reading_charge"
     assert client.payload is not None
     assert client.payload["p_reading_id"] == str(READING_ID)
+    assert client.payload["p_wastewater_tariff_price"] is None
     assert saved.ocr_value == Decimal("125.4")
     assert saved.confirmed_value == Decimal("124")
     assert period is not None
     assert charge is not None
     assert charge.amount == Decimal("198.00")
+    assert wastewater_charge is None

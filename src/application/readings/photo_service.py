@@ -16,8 +16,8 @@ from src.application.interfaces import (
 )
 from src.application.ocr import OCRExecutor
 from src.application.tariffs import TariffService
-from src.domain.entities import BillingPeriod, Charge, Meter, Reading
-from src.domain.enums import ReadingStatus
+from src.domain.entities import BillingPeriod, Charge, Meter, Reading, WastewaterCharge
+from src.domain.enums import ReadingStatus, UtilityType
 from src.domain.services import (
     BillingResult,
     BillingService,
@@ -34,6 +34,8 @@ class PhotoReadingResult:
     validation: ReadingValidationResult | None
     serial_number: str | None = None
     charge: Charge | None = None
+    wastewater_tariff_price: Decimal | None = None
+    wastewater_charge: WastewaterCharge | None = None
 
     @property
     def is_baseline(self) -> bool:
@@ -84,7 +86,7 @@ class PhotoReadingService:
         if ocr_result.reading is None:
             raise OCRReadingNotFoundError("На фотографии не найдено показание счётчика.")
 
-        validation, billing_result, tariff_price = await self._preview(
+        validation, billing_result, tariff_price, wastewater_tariff_price = await self._preview(
             user_id=user_id,
             meter=meter,
             previous_value=previous_value,
@@ -120,6 +122,7 @@ class PhotoReadingService:
                 billing_result=billing_result,
                 tariff_price=tariff_price,
             ),
+            wastewater_tariff_price=wastewater_tariff_price,
         )
 
     async def confirm(
@@ -138,7 +141,7 @@ class PhotoReadingService:
         meter = await self._get_active_meter(user_id=user_id, meter_id=existing.meter_id)
         previous = await self._readings.get_latest_confirmed(existing.meter_id, user_id)
         previous_value = self._confirmed_value(previous)
-        validation, billing_result, tariff_price = await self._preview(
+        validation, billing_result, tariff_price, wastewater_tariff_price = await self._preview(
             user_id=user_id,
             meter=meter,
             previous_value=previous_value,
@@ -163,10 +166,11 @@ class PhotoReadingService:
                 year=existing.captured_at.year,
                 month=existing.captured_at.month,
             )
-        final_reading, _, charge = await self._recognized_readings.confirm(
+        final_reading, _, charge, wastewater_charge = await self._recognized_readings.confirm(
             reading=final_reading,
             period=period,
             charge=charge,
+            wastewater_tariff_price=wastewater_tariff_price,
             user_id=user_id,
         )
         return PhotoReadingResult(
@@ -175,6 +179,8 @@ class PhotoReadingService:
             billing=billing_result,
             validation=validation,
             charge=charge,
+            wastewater_tariff_price=wastewater_tariff_price,
+            wastewater_charge=wastewater_charge,
         )
 
     async def reject(self, *, user_id: UUID, reading_id: UUID) -> Reading:
@@ -212,11 +218,16 @@ class PhotoReadingService:
         previous_value: Decimal | None,
         current_value: Decimal,
         captured_at: datetime,
-    ) -> tuple[ReadingValidationResult | None, BillingResult | None, Decimal | None]:
+    ) -> tuple[
+        ReadingValidationResult | None,
+        BillingResult | None,
+        Decimal | None,
+        Decimal | None,
+    ]:
         if current_value < 0:
             raise ReadingRejectedError("Reading cannot be negative")
         if previous_value is None:
-            return None, None, None
+            return None, None, None, None
         validation = self._validation.validate(
             utility_type=meter.type,
             previous_reading=previous_value,
@@ -230,10 +241,19 @@ class PhotoReadingService:
             utility_type=meter.type,
             on_date=captured_at.date(),
         )
+        wastewater_tariff_price: Decimal | None = None
+        if meter.type in {UtilityType.COLD_WATER, UtilityType.HOT_WATER}:
+            wastewater_tariff_price = await self._tariffs.get_simple_price(
+                user_id=user_id,
+                property_id=meter.property_id,
+                utility_type=UtilityType.WASTEWATER,
+                on_date=captured_at.date(),
+            )
         return (
             validation,
             self._billing.calculate(previous_value, current_value, tariff_price),
             tariff_price,
+            wastewater_tariff_price,
         )
 
     @staticmethod

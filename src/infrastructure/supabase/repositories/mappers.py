@@ -12,6 +12,7 @@ from src.domain.entities import (
     TariffPlan,
     TariffRate,
     User,
+    WastewaterCharge,
 )
 from src.domain.enums import (
     BillingPeriodStatus,
@@ -150,3 +151,27 @@ def charge_from_row(row: dict[str, Any]) -> Charge:
         created_at=_datetime(row.get("created_at")),
     )
 
+
+def wastewater_charge_from_row(row: dict[str, Any]) -> WastewaterCharge:
+    decimal_fields = {
+        key: _decimal(row[key])
+        for key in (
+            "cold_water_consumption",
+            "hot_water_consumption",
+            "consumption",
+            "tariff_price",
+            "amount",
+        )
+    }
+    if any(value is None for value in decimal_fields.values()):
+        raise ValueError("Wastewater charge is missing a numeric value")
+    return WastewaterCharge(
+        id=UUID(str(row["id"])),
+        billing_period_id=UUID(str(row["billing_period_id"])),
+        cold_water_consumption=decimal_fields["cold_water_consumption"],  # type: ignore[arg-type]
+        hot_water_consumption=decimal_fields["hot_water_consumption"],  # type: ignore[arg-type]
+        consumption=decimal_fields["consumption"],  # type: ignore[arg-type]
+        tariff_price=decimal_fields["tariff_price"],  # type: ignore[arg-type]
+        amount=decimal_fields["amount"],  # type: ignore[arg-type]
+        created_at=_datetime(row.get("created_at")),
+    )

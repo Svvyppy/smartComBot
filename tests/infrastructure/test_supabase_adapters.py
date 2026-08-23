@@ -147,6 +147,19 @@ class RpcQuery:
     def execute(self) -> Response:
         meter_id = self.payload["p_meter_id"]
         captured_at = self.payload["p_captured_at"]
+        wastewater_price = self.payload["p_wastewater_tariff_price"]
+        wastewater_charge = None
+        if wastewater_price is not None:
+            wastewater_charge = {
+                "id": "70000000-0000-0000-0000-000000000007",
+                "billing_period_id": "50000000-0000-0000-0000-000000000005",
+                "cold_water_consumption": self.payload["p_consumption"],
+                "hot_water_consumption": "2.5",
+                "consumption": "22.5",
+                "tariff_price": wastewater_price,
+                "amount": "803.70",
+                "created_at": captured_at,
+            }
         return Response(
             {
                 "reading": {
@@ -179,6 +192,7 @@ class RpcQuery:
                     "amount": self.payload["p_amount"],
                     "created_at": captured_at,
                 },
+                "wastewater_charge": wastewater_charge,
             }
         )
 
@@ -202,7 +216,7 @@ async def test_billed_manual_reading_uses_one_atomic_rpc() -> None:
     meter_id = UUID("30000000-0000-0000-0000-000000000003")
     captured = datetime(2026, 8, 23, tzinfo=UTC)
 
-    reading, period, charge = await persistence.save_billed(
+    reading, period, charge, wastewater_charge = await persistence.save_billed(
         reading=Reading(
             meter_id=meter_id,
             confirmed_value=Decimal("120"),
@@ -219,6 +233,7 @@ async def test_billed_manual_reading_uses_one_atomic_rpc() -> None:
             tariff_price=Decimal("8.25"),
             amount=Decimal("165.00"),
         ),
+        wastewater_tariff_price=None,
         user_id=user_id,
     )
 
@@ -226,3 +241,43 @@ async def test_billed_manual_reading_uses_one_atomic_rpc() -> None:
     assert reading.confirmed_value == Decimal("120")
     assert period.property_id == property_id
     assert charge.amount == Decimal("165.00")
+    assert wastewater_charge is None
+
+
+async def test_billed_water_reading_maps_recalculated_wastewater_charge() -> None:
+    client = RpcClient()
+    persistence = SupabaseManualReadingPersistence(client)
+    captured = datetime(2026, 8, 23, tzinfo=UTC)
+
+    _, _, _, wastewater_charge = await persistence.save_billed(
+        reading=Reading(
+            meter_id=UUID("30000000-0000-0000-0000-000000000003"),
+            confirmed_value=Decimal("120"),
+            status=ReadingStatus.MANUAL,
+            captured_at=captured,
+        ),
+        period=BillingPeriod(
+            property_id=UUID("20000000-0000-0000-0000-000000000002"),
+            year=2026,
+            month=8,
+        ),
+        charge=Charge(
+            billing_period_id=None,
+            meter_id=UUID("30000000-0000-0000-0000-000000000003"),
+            previous_reading=Decimal("100"),
+            current_reading=Decimal("120"),
+            consumption=Decimal("20"),
+            tariff_price=Decimal("8.25"),
+            amount=Decimal("165.00"),
+        ),
+        wastewater_tariff_price=Decimal("35.72"),
+        user_id=UUID("10000000-0000-0000-0000-000000000001"),
+    )
+
+    assert client.payload is not None
+    assert client.payload["p_wastewater_tariff_price"] == "35.72"
+    assert wastewater_charge is not None
+    assert wastewater_charge.cold_water_consumption == Decimal("20")
+    assert wastewater_charge.hot_water_consumption == Decimal("2.5")
+    assert wastewater_charge.consumption == Decimal("22.5")
+    assert wastewater_charge.amount == Decimal("803.70")

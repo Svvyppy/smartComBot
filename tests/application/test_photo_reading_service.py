@@ -8,7 +8,7 @@ import pytest
 from src.application.exceptions import OCRReadingNotFoundError
 from src.application.interfaces import OCRResult
 from src.application.readings import PhotoReadingService
-from src.domain.entities import BillingPeriod, Charge, Meter, Reading
+from src.domain.entities import BillingPeriod, Charge, Meter, Reading, WastewaterCharge
 from src.domain.enums import MeterUnit, ReadingStatus, UtilityType
 from src.domain.services import BillingService, ReadingValidationService
 
@@ -65,15 +65,16 @@ class FakeRecognizedPersistence:
         reading: Reading,
         period: BillingPeriod | None,
         charge: Charge | None,
+        wastewater_tariff_price: Decimal | None,
         user_id: UUID,
-    ) -> tuple[Reading, BillingPeriod | None, Charge | None]:
+    ) -> tuple[Reading, BillingPeriod | None, Charge | None, WastewaterCharge | None]:
         self.confirmed = reading
         self.charge = charge
         if period is not None:
             period = replace(period, id=uuid4())
         if charge is not None:
             charge = replace(charge, id=uuid4(), billing_period_id=period.id if period else None)
-        return reading, period, charge
+        return reading, period, charge, None
 
 
 class FakeOCRExecutor:
@@ -140,7 +141,7 @@ def _service(
         billing=BillingService(),
         validation=ReadingValidationService({UtilityType.ELECTRICITY: Decimal("3000")}),
         ocr=ocr,  # type: ignore[arg-type]
-        storage=storage,  # type: ignore[arg-type]
+        storage=storage,
     )
     return service, readings, persistence, ocr, storage
 

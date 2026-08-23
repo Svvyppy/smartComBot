@@ -7,7 +7,7 @@ import pytest
 
 from src.application.exceptions import ReadingRejectedError, SuspiciousReadingError
 from src.application.readings import ReadingService
-from src.domain.entities import BillingPeriod, Charge, Meter, Reading
+from src.domain.entities import BillingPeriod, Charge, Meter, Reading, WastewaterCharge
 from src.domain.enums import MeterUnit, ReadingStatus, UtilityType
 from src.domain.services import BillingService, ReadingValidationService
 
@@ -18,13 +18,17 @@ CAPTURED_AT = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 
 class FakeMeterRepository:
-    def __init__(self) -> None:
+    def __init__(self, utility_type: UtilityType = UtilityType.ELECTRICITY) -> None:
         self.meter = Meter(
             id=METER_ID,
             property_id=PROPERTY_ID,
             name="Электричество",
-            type=UtilityType.ELECTRICITY,
-            unit=MeterUnit.KILOWATT_HOUR,
+            type=utility_type,
+            unit=(
+                MeterUnit.KILOWATT_HOUR
+                if utility_type == UtilityType.ELECTRICITY
+                else MeterUnit.CUBIC_METER
+            ),
         )
 
     async def get_owned(self, meter_id: UUID, user_id: UUID) -> Meter | None:
@@ -63,6 +67,7 @@ class FakeManualReadingPersistence:
     def __init__(self) -> None:
         self.periods: list[BillingPeriod] = []
         self.charges: list[Charge] = []
+        self.wastewater_tariff_price: Decimal | None = None
 
     async def save_billed(
         self,
@@ -70,8 +75,9 @@ class FakeManualReadingPersistence:
         reading: Reading,
         period: BillingPeriod,
         charge: Charge,
+        wastewater_tariff_price: Decimal | None,
         user_id: UUID,
-    ) -> tuple[Reading, BillingPeriod, Charge]:
+    ) -> tuple[Reading, BillingPeriod, Charge, WastewaterCharge | None]:
         saved_reading = replace(reading, id=uuid4(), created_at=CAPTURED_AT)
         saved_period = replace(period, id=uuid4(), created_at=CAPTURED_AT)
         saved_charge = replace(
@@ -82,17 +88,42 @@ class FakeManualReadingPersistence:
         )
         self.periods.append(saved_period)
         self.charges.append(saved_charge)
-        return saved_reading, saved_period, saved_charge
+        self.wastewater_tariff_price = wastewater_tariff_price
+        wastewater_charge = None
+        if wastewater_tariff_price is not None:
+            wastewater_charge = WastewaterCharge(
+                id=uuid4(),
+                billing_period_id=saved_period.id,
+                cold_water_consumption=saved_charge.consumption,
+                hot_water_consumption=Decimal("0"),
+                consumption=saved_charge.consumption,
+                tariff_price=wastewater_tariff_price,
+                amount=(saved_charge.consumption * wastewater_tariff_price).quantize(
+                    Decimal("0.01")
+                ),
+                created_at=CAPTURED_AT,
+            )
+        return saved_reading, saved_period, saved_charge, wastewater_charge
 
 
 class FakeTariffService:
-    def __init__(self, price: Decimal = Decimal("8.25")) -> None:
+    def __init__(
+        self,
+        price: Decimal = Decimal("8.25"),
+        wastewater_price: Decimal = Decimal("35.72"),
+    ) -> None:
         self.price = price
-        self.calls = 0
+        self.wastewater_price = wastewater_price
+        self.calls: list[UtilityType] = []
 
-    async def get_simple_price(self, **_: object) -> Decimal:
-        self.calls += 1
-        return self.price
+    async def get_simple_price(self, **kwargs: object) -> Decimal:
+        utility_type = UtilityType(str(kwargs["utility_type"]))
+        self.calls.append(utility_type)
+        return (
+            self.wastewater_price
+            if utility_type == UtilityType.WASTEWATER
+            else self.price
+        )
 
 
 def previous_reading(value: str) -> Reading:
@@ -107,6 +138,7 @@ def previous_reading(value: str) -> Reading:
 
 def make_service(
     previous: Reading | None,
+    utility_type: UtilityType = UtilityType.ELECTRICITY,
 ) -> tuple[
     ReadingService,
     FakeReadingRepository,
@@ -117,12 +149,18 @@ def make_service(
     billing_repository = FakeManualReadingPersistence()
     tariffs = FakeTariffService()
     service = ReadingService(
-        meters=FakeMeterRepository(),  # type: ignore[arg-type]
+        meters=FakeMeterRepository(utility_type),  # type: ignore[arg-type]
         readings=readings,  # type: ignore[arg-type]
-        manual_readings=billing_repository,  # type: ignore[arg-type]
+        manual_readings=billing_repository,
         tariffs=tariffs,  # type: ignore[arg-type]
         billing=BillingService(),
-        validation=ReadingValidationService({UtilityType.ELECTRICITY: Decimal("3000")}),
+        validation=ReadingValidationService(
+            {
+                UtilityType.ELECTRICITY: Decimal("3000"),
+                UtilityType.COLD_WATER: Decimal("100"),
+                UtilityType.HOT_WATER: Decimal("100"),
+            }
+        ),
     )
     return service, readings, billing_repository, tariffs
 
@@ -142,7 +180,7 @@ async def test_first_manual_reading_is_saved_as_baseline() -> None:
     assert result.reading.status == ReadingStatus.MANUAL
     assert len(readings.added) == 1
     assert billing_repository.charges == []
-    assert tariffs.calls == 0
+    assert tariffs.calls == []
 
 
 async def test_subsequent_reading_creates_snapshot_charge() -> None:
@@ -161,6 +199,26 @@ async def test_subsequent_reading_creates_snapshot_charge() -> None:
     assert result.charge is not None
     assert result.charge.tariff_price == Decimal("8.25")
     assert billing_repository.periods[0].month == 8
+
+
+async def test_water_reading_recalculates_wastewater_with_own_tariff() -> None:
+    service, _, persistence, tariffs = make_service(
+        previous_reading("100"),
+        UtilityType.COLD_WATER,
+    )
+
+    result = await service.record_manual(
+        user_id=USER_ID,
+        meter_id=METER_ID,
+        value=Decimal("104.25"),
+        captured_at=CAPTURED_AT,
+    )
+
+    assert tariffs.calls == [UtilityType.COLD_WATER, UtilityType.WASTEWATER]
+    assert persistence.wastewater_tariff_price == Decimal("35.72")
+    assert result.wastewater_charge is not None
+    assert result.wastewater_charge.consumption == Decimal("4.25")
+    assert result.wastewater_charge.amount == Decimal("151.81")
 
 
 async def test_decreasing_reading_is_not_saved() -> None:

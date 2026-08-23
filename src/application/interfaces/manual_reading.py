@@ -1,7 +1,8 @@
+from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
-from src.domain.entities import BillingPeriod, Charge, Reading
+from src.domain.entities import BillingPeriod, Charge, Reading, WastewaterCharge
 
 
 class ManualReadingPersistence(Protocol):
@@ -13,6 +14,6 @@ class ManualReadingPersistence(Protocol):
         reading: Reading,
         period: BillingPeriod,
         charge: Charge,
+        wastewater_tariff_price: Decimal | None,
         user_id: UUID,
-    ) -> tuple[Reading, BillingPeriod, Charge]: ...
-
+    ) -> tuple[Reading, BillingPeriod, Charge, WastewaterCharge | None]: ...

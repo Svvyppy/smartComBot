@@ -1,13 +1,15 @@
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from src.domain.entities import BillingPeriod, Charge, Reading
+from src.domain.entities import BillingPeriod, Charge, Reading, WastewaterCharge
 from src.domain.enums import ReadingStatus
 from src.infrastructure.supabase.repositories.base import SupabaseRepository
 from src.infrastructure.supabase.repositories.mappers import (
     billing_period_from_row,
     charge_from_row,
     reading_from_row,
+    wastewater_charge_from_row,
 )
 
 
@@ -18,8 +20,9 @@ class SupabaseRecognizedReadingPersistence(SupabaseRepository):
         reading: Reading,
         period: BillingPeriod | None,
         charge: Charge | None,
+        wastewater_tariff_price: Decimal | None,
         user_id: UUID,
-    ) -> tuple[Reading, BillingPeriod | None, Charge | None]:
+    ) -> tuple[Reading, BillingPeriod | None, Charge | None, WastewaterCharge | None]:
         if reading.id is None or reading.confirmed_value is None:
             raise ValueError("A confirmed OCR reading requires id and confirmed_value")
         if reading.status != ReadingStatus.CONFIRMED:
@@ -39,6 +42,9 @@ class SupabaseRecognizedReadingPersistence(SupabaseRepository):
             "p_consumption": None if charge is None else str(charge.consumption),
             "p_tariff_price": None if charge is None else str(charge.tariff_price),
             "p_amount": None if charge is None else str(charge.amount),
+            "p_wastewater_tariff_price": (
+                None if wastewater_tariff_price is None else str(wastewater_tariff_price)
+            ),
         }
         response = await self._run(
             lambda: self._client.rpc("confirm_recognized_reading_charge", payload).execute()
@@ -48,8 +54,14 @@ class SupabaseRecognizedReadingPersistence(SupabaseRepository):
             raise RuntimeError("Supabase did not return the confirmed OCR reading bundle")
         saved_period = bundle.get("billing_period")
         saved_charge = bundle.get("charge")
+        saved_wastewater_charge = bundle.get("wastewater_charge")
         return (
             reading_from_row(bundle["reading"]),
             None if saved_period is None else billing_period_from_row(saved_period),
             None if saved_charge is None else charge_from_row(saved_charge),
+            (
+                None
+                if saved_wastewater_charge is None
+                else wastewater_charge_from_row(saved_wastewater_charge)
+            ),
         )

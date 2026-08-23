@@ -10,8 +10,8 @@ from src.application.exceptions import (
 )
 from src.application.interfaces import ManualReadingPersistence, MeterRepository, ReadingRepository
 from src.application.tariffs import TariffService
-from src.domain.entities import BillingPeriod, Charge, Reading
-from src.domain.enums import ReadingStatus
+from src.domain.entities import BillingPeriod, Charge, Reading, WastewaterCharge
+from src.domain.enums import ReadingStatus, UtilityType
 from src.domain.services import (
     BillingResult,
     BillingService,
@@ -27,6 +27,7 @@ class ManualReadingResult:
     billing: BillingResult | None
     validation: ReadingValidationResult | None
     charge: Charge | None
+    wastewater_charge: WastewaterCharge | None = None
 
     @property
     def is_baseline(self) -> bool:
@@ -77,6 +78,8 @@ class ReadingService:
         billing_result: BillingResult | None = None
         charge: Charge | None = None
         tariff_price: Decimal | None = None
+        wastewater_tariff_price: Decimal | None = None
+        wastewater_charge: WastewaterCharge | None = None
         previous_value: Decimal | None = None
         if previous is not None:
             if previous.confirmed_value is None:
@@ -99,6 +102,13 @@ class ReadingService:
                 on_date=captured.date(),
             )
             billing_result = self._billing.calculate(previous_value, value, tariff_price)
+            if meter.type in {UtilityType.COLD_WATER, UtilityType.HOT_WATER}:
+                wastewater_tariff_price = await self._tariffs.get_simple_price(
+                    user_id=user_id,
+                    property_id=meter.property_id,
+                    utility_type=UtilityType.WASTEWATER,
+                    on_date=captured.date(),
+                )
 
         reading = Reading(
             meter_id=meter_id,
@@ -122,10 +132,11 @@ class ReadingService:
                 tariff_price=tariff_price,
                 amount=billing_result.amount,
             )
-            reading, _, charge = await self._manual_readings.save_billed(
+            reading, _, charge, wastewater_charge = await self._manual_readings.save_billed(
                 reading=reading,
                 period=period,
                 charge=charge,
+                wastewater_tariff_price=wastewater_tariff_price,
                 user_id=user_id,
             )
         else:
@@ -137,6 +148,7 @@ class ReadingService:
             billing=billing_result,
             validation=validation,
             charge=charge,
+            wastewater_charge=wastewater_charge,
         )
 
     async def list_history(

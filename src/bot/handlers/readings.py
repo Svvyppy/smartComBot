@@ -237,13 +237,25 @@ def create_readings_router(
         assert result.previous_reading is not None
         assert result.billing is not None
         assert result.charge is not None
-        return (
+        text = (
             f"{utility_label(meter.type)} — {meter.name}\n\n"
             f"Предыдущие: {format_decimal(result.previous_reading)} {unit}\n"
             f"Текущие: {current} {unit}\n"
             f"Расход: {format_decimal(result.billing.consumption)} {unit}\n"
             f"Тариф: {format_decimal(result.charge.tariff_price)} ₽/{unit}\n"
             f"Стоимость: {format_money(result.billing.amount)} ₽"
+        )
+        if result.wastewater_charge is None:
+            return text
+        wastewater = result.wastewater_charge
+        return (
+            f"{text}\n\n"
+            "Водоотведение по объекту\n"
+            f"Холодная вода: {format_decimal(wastewater.cold_water_consumption)} м³\n"
+            f"Горячая вода: {format_decimal(wastewater.hot_water_consumption)} м³\n"
+            f"Общий расход: {format_decimal(wastewater.consumption)} м³\n"
+            f"Тариф: {format_decimal(wastewater.tariff_price)} ₽/м³\n"
+            f"Стоимость: {format_money(wastewater.amount)} ₽"
         )
 
     def recognition_text(meter: Meter, result: PhotoReadingResult) -> str:
@@ -274,6 +286,15 @@ def create_readings_router(
             )
         if result.validation is not None and result.validation.requires_confirmation:
             lines.extend(["", "⚠️ Расход выглядит необычно большим."])
+        if result.wastewater_tariff_price is not None and result.billing is not None:
+            lines.extend(
+                [
+                    "",
+                    "После подтверждения будет пересчитано водоотведение:",
+                    f"текущий расход {format_decimal(result.billing.consumption)} м³, "
+                    f"тариф {format_decimal(result.wastewater_tariff_price)} ₽/м³.",
+                ]
+            )
         return "\n".join(lines)
 
     async def photo_retry(
