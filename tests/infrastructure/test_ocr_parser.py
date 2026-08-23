@@ -60,3 +60,16 @@ def test_parser_extracts_serial_prefixes_seen_on_real_water_meters() -> None:
 
     assert first.serial_number == "N164701553"
     assert second.serial_number == "OB 898047813"
+
+
+def test_parser_understands_ocr_variants_of_number_sign() -> None:
+    for label in ("No.", "Ne.", "Ng."):
+        result = MeterReadingParser().parse(
+            [
+                OCRTextLine(f"{label}22297698 2022r.", 0.92),
+                OCRTextLine("3465.81", 0.84),
+            ]
+        )
+
+        assert result.reading == Decimal("3465.81")
+        assert result.serial_number == "22297698"

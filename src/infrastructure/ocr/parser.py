@@ -12,8 +12,9 @@ _NUMBER_PATTERN = re.compile(
     r"(?:\d{1,3}(?:[ '\u00a0]\d{3})+(?:[.,]\d{1,4})?|\d{1,12}(?:[.,]\d{1,4})?)"
     r"(?![A-Za-zА-Яа-яЁё0-9])"
 )
+_SERIAL_LABEL = r"(?:s\s*/?\s*n|serial|сер(?:ия|ийный)?|номер|№|n\s*(?:[oоeеg]\.?|[°º]))"
 _SERIAL_PATTERN = re.compile(
-    r"(?:s\s*/?\s*n|serial|сер(?:ия|ийный)?|номер|№)\s*[:#№-]?\s*([A-ZА-Я0-9-]{5,20})",
+    rf"{_SERIAL_LABEL}\s*[:#№-]?\s*([A-ZА-Я0-9-]{{5,20}})",
     re.IGNORECASE,
 )
 _PREFIXED_SERIAL_PATTERN = re.compile(
@@ -21,7 +22,7 @@ _PREFIXED_SERIAL_PATTERN = re.compile(
     r"(?P<number>\d(?:[ -]?\d){5,19})(?!\d)",
     re.IGNORECASE,
 )
-_SERIAL_MARKER = re.compile(r"(?:s\s*/?\s*n|serial|сер(?:ия|ийный)?|номер|№)", re.I)
+_SERIAL_MARKER = re.compile(_SERIAL_LABEL, re.I)
 _ELECTRICAL_NOISE = re.compile(
     r"(?:\b\d+(?:[.,]\d+)?\s*(?:v|a|hz|в|а|гц)\b|\d+\s*[-–]\s*\d+\s*a\b)",
     re.I,
