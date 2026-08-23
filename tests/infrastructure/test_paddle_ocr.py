@@ -240,6 +240,7 @@ def test_paddle_adapter_recognizes_complete_lcd_reading_on_expanded_crop() -> No
     engine = FakeLCDEngine(
         [
             _lcd_source_page("346", unit="KBrou"),
+            _lcd_source_page("346"),
             FakeLCDPage(["3465.81"], [0.87]),
         ]
     )
@@ -254,13 +255,14 @@ def test_paddle_adapter_recognizes_complete_lcd_reading_on_expanded_crop() -> No
     assert result.reading == Decimal("3465.81")
     assert result.serial_number == "22297698"
     assert result.confidence == 0.87
-    assert engine.predict_calls == 2
+    assert engine.predict_calls == 3
 
 
 def test_paddle_adapter_combines_lcd_integer_with_separate_fraction_crop() -> None:
     engine = FakeLCDEngine(
         [
             _lcd_source_page("1172"),
+            _lcd_source_page("117"),
             FakeLCDPage(["117"], [0.71]),
             FakeLCDPage(["101172"], [0.66]),
             FakeLCDPage(["C.55"], [0.74]),
@@ -277,4 +279,4 @@ def test_paddle_adapter_combines_lcd_integer_with_separate_fraction_crop() -> No
     assert result.reading == Decimal("1172.55")
     assert result.serial_number == "22297698"
     assert result.confidence == 0.74
-    assert engine.predict_calls == 4
+    assert engine.predict_calls == 5

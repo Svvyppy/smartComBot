@@ -351,9 +351,21 @@ class PaddleOCRService:
         region = max(candidates, key=self._polygon_height)
         assert region.polygon is not None
         integer_digits = self._digits(region.line.text)
+        source_polygon = region.polygon
+
+        source_regions = self._predict_regions(source_image)
+        source_candidates = [
+            source_region
+            for source_region in source_regions
+            if self._is_lcd_line(source_region, source_regions, source_image.shape[0])
+        ]
+        if source_candidates:
+            source_region = max(source_candidates, key=self._polygon_height)
+            assert source_region.polygon is not None
+            source_polygon = source_region.polygon
 
         for horizontal_scale in (2.7, 3.0):
-            display = self._crop_lcd_line(source_image, region.polygon, horizontal_scale)
+            display = self._crop_lcd_line(source_image, source_polygon, horizontal_scale)
             if display.size == 0:
                 continue
             display = self._add_white_border(display, 20)
@@ -366,7 +378,7 @@ class PaddleOCRService:
 
         if len(integer_digits) < 4:
             return None
-        display = self._crop_lcd_line(source_image, region.polygon, 2.4)
+        display = self._crop_lcd_line(source_image, source_polygon, 2.4)
         if display.size == 0:
             return None
         height, width = display.shape[:2]
