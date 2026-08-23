@@ -7,6 +7,8 @@ from src.domain.entities import (
     BillingPeriod,
     Charge,
     Meter,
+    MeterOCRProfile,
+    OCRFeedback,
     Property,
     Reading,
     TariffPlan,
@@ -86,6 +88,49 @@ def reading_from_row(row: dict[str, Any]) -> Reading:
         photo_path=row.get("photo_path"),
         captured_at=captured_at,
         created_at=_datetime(row.get("created_at")),
+    )
+
+
+def ocr_feedback_from_row(row: dict[str, Any]) -> OCRFeedback:
+    detected_value = _decimal(row.get("detected_value"))
+    corrected_value = _decimal(row.get("corrected_value"))
+    if detected_value is None or corrected_value is None:
+        raise ValueError("OCR feedback is missing a numeric value")
+    raw_text = row.get("raw_text")
+    if not isinstance(raw_text, list) or not all(
+        isinstance(line, str) for line in raw_text
+    ):
+        raise ValueError("OCR feedback raw_text must be an array of strings")
+    return OCRFeedback(
+        id=UUID(str(row["id"])),
+        reading_id=UUID(str(row["reading_id"])),
+        meter_id=UUID(str(row["meter_id"])),
+        user_id=UUID(str(row["user_id"])),
+        detected_value=detected_value,
+        corrected_value=corrected_value,
+        serial_number=row.get("serial_number"),
+        raw_text=tuple(raw_text),
+        mechanical_digits=row.get("mechanical_digits"),
+        photo_path=row.get("photo_path"),
+        status=str(row.get("status") or "pending"),
+        created_at=_datetime(row.get("created_at")),
+    )
+
+
+def meter_ocr_profile_from_row(row: dict[str, Any]) -> MeterOCRProfile:
+    fraction_digits = row.get("mechanical_fraction_digits")
+    return MeterOCRProfile(
+        meter_id=UUID(str(row["meter_id"])),
+        mechanical_fraction_digits=(
+            None if fraction_digits is None else int(fraction_digits)
+        ),
+        learned_from_feedback_id=(
+            None
+            if row.get("learned_from_feedback_id") is None
+            else UUID(str(row["learned_from_feedback_id"]))
+        ),
+        created_at=_datetime(row.get("created_at")),
+        updated_at=_datetime(row.get("updated_at")),
     )
 
 

@@ -1,5 +1,6 @@
 from src.domain.entities.billing import BillingPeriod, Charge, WastewaterCharge
 from src.domain.entities.meter import Meter
+from src.domain.entities.ocr_feedback import MeterOCRProfile, OCRFeedback
 from src.domain.entities.property import Property
 from src.domain.entities.reading import Reading
 from src.domain.entities.tariff import TariffPlan, TariffRate
@@ -9,6 +10,8 @@ __all__ = [
     "BillingPeriod",
     "Charge",
     "Meter",
+    "MeterOCRProfile",
+    "OCRFeedback",
     "Property",
     "Reading",
     "TariffPlan",

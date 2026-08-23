@@ -5,6 +5,7 @@ from src.application.interfaces.recognized_reading import RecognizedReadingPersi
 from src.application.interfaces.repositories import (
     BillingRepository,
     MeterRepository,
+    OCRFeedbackRepository,
     PropertyRepository,
     ReadingRepository,
     TariffRepository,
@@ -17,6 +18,7 @@ __all__ = [
     "ImageStorage",
     "ManualReadingPersistence",
     "MeterRepository",
+    "OCRFeedbackRepository",
     "OCRResult",
     "OCRDebugSampleStore",
     "OCRTextLine",

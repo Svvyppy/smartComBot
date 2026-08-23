@@ -6,6 +6,8 @@ from src.domain.entities import (
     BillingPeriod,
     Charge,
     Meter,
+    MeterOCRProfile,
+    OCRFeedback,
     Property,
     Reading,
     TariffPlan,
@@ -66,6 +68,22 @@ class ReadingRepository(Protocol):
         *,
         limit: int = 100,
     ) -> list[Reading]: ...
+
+
+class OCRFeedbackRepository(Protocol):
+    async def add(self, feedback: OCRFeedback, user_id: UUID) -> OCRFeedback: ...
+
+    async def get_meter_profile(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+    ) -> MeterOCRProfile | None: ...
+
+    async def save_meter_profile(
+        self,
+        profile: MeterOCRProfile,
+        user_id: UUID,
+    ) -> MeterOCRProfile: ...
 
 
 class TariffRepository(Protocol):
