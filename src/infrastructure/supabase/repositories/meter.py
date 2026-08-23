@@ -39,6 +39,28 @@ class SupabaseMeterRepository(SupabaseRepository):
         row = self._first(response)
         return None if row is None else meter_from_row(row)
 
+    async def set_serial_number_if_missing(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+        serial_number: str,
+    ) -> Meter:
+        await self._require_meter_owned(meter_id, user_id)
+        response = await self._run(
+            lambda: self._client.table("meters")
+            .update({"serial_number": serial_number})
+            .eq("id", str(meter_id))
+            .is_("serial_number", "null")
+            .execute()
+        )
+        row = self._first(response)
+        if row is not None:
+            return meter_from_row(row)
+        meter = await self.get_owned(meter_id, user_id)
+        if meter is None:
+            raise RuntimeError("Meter disappeared while setting its serial number")
+        return meter
+
     async def list_by_property(
         self,
         property_id: UUID,
@@ -61,4 +83,3 @@ class SupabaseMeterRepository(SupabaseRepository):
 
         response = await self._run(query)
         return [meter_from_row(row) for row in self._data(response)]
-

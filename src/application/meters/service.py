@@ -4,6 +4,7 @@ from src.application.exceptions import AccessDeniedError
 from src.application.interfaces import MeterRepository
 from src.domain.entities import Meter
 from src.domain.enums import MeterUnit, UtilityType
+from src.domain.services import clean_serial_number, serial_numbers_match
 
 EXPECTED_UNITS = {
     UtilityType.COLD_WATER: MeterUnit.CUBIC_METER,
@@ -65,3 +66,37 @@ class MeterService:
             active_only=active_only,
         )
 
+    async def bind_serial_number_if_missing(
+        self,
+        *,
+        user_id: UUID,
+        meter_id: UUID,
+        serial_number: str,
+    ) -> tuple[Meter, bool]:
+        meter = await self.get(user_id=user_id, meter_id=meter_id)
+        if meter.serial_number:
+            return meter, False
+
+        cleaned = clean_serial_number(serial_number)
+        if not cleaned:
+            raise ValueError("Serial number cannot be empty")
+        siblings = await self.list(
+            user_id=user_id,
+            property_id=meter.property_id,
+            active_only=False,
+        )
+        for sibling in siblings:
+            if (
+                sibling.id != meter.id
+                and sibling.serial_number
+                and serial_numbers_match(sibling.serial_number, cleaned)
+            ):
+                raise ValueError(
+                    f"Серийный номер уже привязан к счётчику «{sibling.name}»."
+                )
+        updated = await self._meters.set_serial_number_if_missing(
+            meter_id,
+            user_id,
+            cleaned,
+        )
+        return updated, updated.serial_number == cleaned

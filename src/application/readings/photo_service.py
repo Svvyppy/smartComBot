@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -25,6 +24,7 @@ from src.domain.services import (
     BillingService,
     ReadingValidationResult,
     ReadingValidationService,
+    serial_number_keys,
 )
 
 
@@ -315,12 +315,7 @@ class PhotoReadingService:
 
     @staticmethod
     def _serial_keys(serial_number: str) -> frozenset[str]:
-        normalized = re.sub(r"[^0-9A-ZА-Я]", "", serial_number.upper())
-        digits = "".join(character for character in normalized if character.isdigit())
-        keys = {normalized} if normalized else set()
-        if len(digits) >= 6:
-            keys.add(digits)
-        return frozenset(keys)
+        return serial_number_keys(serial_number)
 
     @staticmethod
     def _confirmed_value(previous: Reading | None) -> Decimal | None:

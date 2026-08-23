@@ -34,6 +34,13 @@ class MeterRepository(Protocol):
 
     async def get_owned(self, meter_id: UUID, user_id: UUID) -> Meter | None: ...
 
+    async def set_serial_number_if_missing(
+        self,
+        meter_id: UUID,
+        user_id: UUID,
+        serial_number: str,
+    ) -> Meter: ...
+
     async def list_by_property(
         self,
         property_id: UUID,

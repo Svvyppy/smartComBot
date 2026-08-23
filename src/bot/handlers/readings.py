@@ -307,6 +307,8 @@ def create_readings_router(
         ]
         if result.serial_number:
             lines.append(f"Серийный номер на фото: {result.serial_number}")
+            if not meter.serial_number:
+                lines.append("После подтверждения номер будет привязан к счётчику.")
         if result.is_baseline:
             lines.extend(["", "Это первое показание — оно будет сохранено как начальное."])
         else:
@@ -371,6 +373,7 @@ def create_readings_router(
         await state.update_data(
             meter_id=str(meter.id),
             reading_id=str(result.reading.id),
+            recognized_serial_number=result.serial_number,
         )
         await state.set_state(ReadingForm.photo_confirmation)
         await message.answer(
@@ -698,7 +701,10 @@ def create_readings_router(
 
         if result.reading.id is None:
             raise RuntimeError("Saved recognized reading does not have an id")
-        await state.update_data(reading_id=str(result.reading.id))
+        await state.update_data(
+            reading_id=str(result.reading.id),
+            recognized_serial_number=result.serial_number,
+        )
         await state.set_state(ReadingForm.photo_confirmation)
         await message.answer(
             recognition_text(meter, result),
@@ -869,6 +875,8 @@ def create_readings_router(
         value: Decimal | None,
     ) -> bool:
         assert current_user.id is not None
+        state_data = await state.get_data()
+        recognized_serial_number = state_data.get("recognized_serial_number")
         meter = await meters.get(user_id=current_user.id, meter_id=meter_id)
         try:
             result = await photo_readings.confirm(
@@ -902,6 +910,28 @@ def create_readings_router(
             )
             return False
 
+        serial_note = ""
+        if isinstance(recognized_serial_number, str) and recognized_serial_number:
+            try:
+                meter, was_bound = await meters.bind_serial_number_if_missing(
+                    user_id=current_user.id,
+                    meter_id=meter_id,
+                    serial_number=recognized_serial_number,
+                )
+                if was_bound:
+                    serial_note = (
+                        "\n\nСерийный номер "
+                        f"{meter.serial_number} привязан к счётчику."
+                    )
+            except ValueError as exc:
+                serial_note = f"\n\n⚠️ Серийный номер не привязан: {exc}"
+            except Exception:
+                logger.exception(
+                    "Meter serial binding failed telegram_id=%s meter_id=%s",
+                    current_user.telegram_id,
+                    meter_id,
+                )
+                serial_note = "\n\n⚠️ Не удалось привязать серийный номер."
         await state.clear()
         logger.info(
             "Photo reading confirmed telegram_id=%s meter_id=%s reading_id=%s corrected=%s",
@@ -910,7 +940,10 @@ def create_readings_router(
             reading_id,
             value is not None,
         )
-        await message.answer(result_text(meter, result), reply_markup=main_menu_keyboard())
+        await message.answer(
+            result_text(meter, result) + serial_note,
+            reply_markup=main_menu_keyboard(),
+        )
         return True
 
     @router.callback_query(
