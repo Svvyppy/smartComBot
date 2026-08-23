@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from src.bot.filters import TextEquals
 from src.bot.keyboards import main_menu_keyboard
 from src.bot.keyboards.callbacks import ActionCallback
+from src.bot.keyboards.common import mini_app_keyboard
 from src.bot.texts import MenuButton
 from src.domain.entities import User
 
@@ -23,7 +24,7 @@ HELP_TEXT = (
 )
 
 
-def create_start_router() -> Router:
+def create_start_router(mini_app_url: str | None = None) -> Router:
     router = Router(name="start")
 
     @router.message(CommandStart())
@@ -34,7 +35,20 @@ def create_start_router() -> Router:
             f"Здравствуйте{greeting}!\n\n"
             "Я помогу учитывать показания счётчиков и коммунальные платежи. "
             "Начните с добавления объекта.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=main_menu_keyboard(mini_app_url),
+        )
+
+    @router.message(Command("app"))
+    async def open_mini_app(message: Message) -> None:
+        if not mini_app_url:
+            await message.answer(
+                "Mini App пока не настроен.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        await message.answer(
+            "Откройте дашборд SmartCom:",
+            reply_markup=mini_app_keyboard(mini_app_url),
         )
 
     @router.message(Command("help"))

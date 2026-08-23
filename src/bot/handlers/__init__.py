@@ -14,9 +14,10 @@ def create_bot_router(
     services: ApplicationServices,
     *,
     max_photo_bytes: int = 10_000_000,
+    mini_app_url: str | None = None,
 ) -> Router:
     router = Router(name="utility_bot")
-    router.include_router(create_start_router())
+    router.include_router(create_start_router(mini_app_url))
     router.include_router(
         create_ocr_debug_router(services.ocr_debug, max_photo_bytes=max_photo_bytes)
     )

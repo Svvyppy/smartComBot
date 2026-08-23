@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
 
 from src.bootstrap import build_application
 from src.bot.handlers import create_bot_router
@@ -45,14 +45,17 @@ async def run() -> None:
     dispatcher.message.outer_middleware(user_middleware)
     dispatcher.callback_query.outer_middleware(user_middleware)
     dispatcher.include_router(
-        create_bot_router(services, max_photo_bytes=settings.ocr_max_image_bytes)
+        create_bot_router(
+            services,
+            max_photo_bytes=settings.ocr_max_image_bytes,
+            mini_app_url=settings.mini_app_url or None,
+        )
     )
 
     try:
         logger.info("Starting utility bot with long polling")
         async with Bot(token=settings.bot_token.get_secret_value()) as bot:
-            await bot.set_my_commands(
-                [
+            commands = [
                     BotCommand(command="start", description="Главное меню"),
                     BotCommand(command="properties", description="Объекты"),
                     BotCommand(command="meters", description="Счётчики"),
@@ -64,7 +67,15 @@ async def run() -> None:
                     BotCommand(command="help", description="Помощь"),
                     BotCommand(command="cancel", description="Отменить ввод"),
                 ]
-            )
+            if settings.mini_app_url:
+                commands.insert(1, BotCommand(command="app", description="Открыть дашборд"))
+                await bot.set_chat_menu_button(
+                    menu_button=MenuButtonWebApp(
+                        text="Дашборд",
+                        web_app=WebAppInfo(url=settings.mini_app_url),
+                    )
+                )
+            await bot.set_my_commands(commands)
             await bot.delete_webhook(drop_pending_updates=False)
             await dispatcher.start_polling(bot)
     finally:

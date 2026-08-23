@@ -2,10 +2,147 @@
 <html lang="ru">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SmartCom</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
+    <title>SmartCom — коммунальные платежи</title>
+    <link rel="stylesheet" href="/miniapp/static/styles.css">
+    <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+    <script src="/miniapp/static/app.js" defer></script>
   </head>
   <body>
-    <main>SmartCom Mini App загружается…</main>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <div>
+            <p class="eyebrow">Умный учёт</p>
+            <h1>SmartCom</h1>
+          </div>
+        </div>
+        <button class="icon-button" id="refresh-button" type="button" aria-label="Обновить данные">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
+          </svg>
+        </button>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div>
+            <p class="hero-kicker" id="greeting">Добрый день</p>
+            <h2>Всё по дому — в одном месте</h2>
+            <p class="hero-copy">Показания, расход и состояние счётчиков без лишних действий.</p>
+          </div>
+          <div class="hero-orb" aria-hidden="true">
+            <svg viewBox="0 0 48 48">
+              <path d="M24 5c6 8 13 15 13 24a13 13 0 1 1-26 0C11 20 18 13 24 5Z" />
+              <path d="M18 31c1.2 3 3.4 4.5 6.5 4.5" />
+            </svg>
+          </div>
+        </section>
+
+        <section class="summary-grid" id="summary" aria-label="Сводка">
+          <article class="summary-card skeleton-card"></article>
+          <article class="summary-card skeleton-card"></article>
+          <article class="summary-card skeleton-card"></article>
+          <article class="summary-card skeleton-card"></article>
+        </section>
+
+        <section class="section-block">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Управление</p>
+              <h2>Объекты и счётчики</h2>
+            </div>
+            <button class="primary-button compact" id="add-property-button" type="button">
+              <span aria-hidden="true">＋</span> Объект
+            </button>
+          </div>
+          <div class="properties" id="properties" aria-live="polite">
+            <div class="loading-state">
+              <span class="spinner" aria-hidden="true"></span>
+              <p>Загружаем ваши данные…</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+    <dialog class="dialog" id="property-dialog">
+      <form class="dialog-card" id="property-form">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Новый объект</p>
+            <h2>Добавить квартиру или дом</h2>
+          </div>
+          <button class="icon-button close-dialog" type="button" aria-label="Закрыть">×</button>
+        </div>
+        <label>
+          <span>Название</span>
+          <input name="name" maxlength="100" required placeholder="Например, Квартира">
+        </label>
+        <label>
+          <span>Адрес <small>необязательно</small></span>
+          <input name="address" maxlength="500" placeholder="Улица, дом, квартира">
+        </label>
+        <button class="primary-button" type="submit">Добавить объект</button>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="meter-dialog">
+      <form class="dialog-card" id="meter-form">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Новый прибор</p>
+            <h2>Добавить счётчик</h2>
+          </div>
+          <button class="icon-button close-dialog" type="button" aria-label="Закрыть">×</button>
+        </div>
+        <label>
+          <span>Объект</span>
+          <select name="property_id" id="meter-property" required></select>
+        </label>
+        <label>
+          <span>Название</span>
+          <input name="name" maxlength="100" required placeholder="Например, Холодная вода в ванной">
+        </label>
+        <label>
+          <span>Тип ресурса</span>
+          <select name="type" required>
+            <option value="cold_water">Холодная вода</option>
+            <option value="hot_water">Горячая вода</option>
+            <option value="electricity">Электричество</option>
+          </select>
+        </label>
+        <label>
+          <span>Серийный номер <small>необязательно</small></span>
+          <input name="serial_number" maxlength="100" placeholder="Можно привязать позже по фото">
+        </label>
+        <button class="primary-button" type="submit">Добавить счётчик</button>
+      </form>
+    </dialog>
+
+    <dialog class="dialog danger-dialog" id="delete-dialog">
+      <form class="dialog-card" id="delete-form">
+        <div class="danger-symbol" aria-hidden="true">!</div>
+        <h2 id="delete-title">Удалить?</h2>
+        <p id="delete-description"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button close-dialog" type="button">Отмена</button>
+          <button class="danger-button" id="delete-confirm" type="submit">Удалить</button>
+        </div>
+      </form>
+    </dialog>
+
+    <template id="empty-template">
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">⌂</div>
+        <h3>Добавьте первый объект</h3>
+        <p>Создайте квартиру или дом, чтобы подключить счётчики и передавать показания.</p>
+        <button class="primary-button" data-action="add-property" type="button">Добавить объект</button>
+      </div>
+    </template>
   </body>
 </html>

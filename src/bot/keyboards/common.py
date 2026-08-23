@@ -6,6 +6,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -22,15 +23,40 @@ from src.domain.entities import Meter, Property
 from src.domain.enums import UtilityType
 
 
-def main_menu_keyboard() -> ReplyKeyboardMarkup:
+def main_menu_keyboard(mini_app_url: str | None = None) -> ReplyKeyboardMarkup:
+    dashboard_row = (
+        [
+            [
+                KeyboardButton(
+                    text="📊 Открыть дашборд",
+                    web_app=WebAppInfo(url=mini_app_url),
+                )
+            ]
+        ]
+        if mini_app_url
+        else []
+    )
     return ReplyKeyboardMarkup(
-        keyboard=[
+        keyboard=dashboard_row + [
             [KeyboardButton(text=MenuButton.PROPERTIES), KeyboardButton(text=MenuButton.METERS)],
             [KeyboardButton(text=MenuButton.READINGS), KeyboardButton(text=MenuButton.TARIFFS)],
             [KeyboardButton(text=MenuButton.HISTORY), KeyboardButton(text=MenuButton.HELP)],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
+    )
+
+
+def mini_app_keyboard(mini_app_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📊 Открыть SmartCom",
+                    web_app=WebAppInfo(url=mini_app_url),
+                )
+            ]
+        ]
     )
 
 

@@ -52,6 +52,15 @@ def test_main_menu_contains_all_sections() -> None:
     assert labels == set(MenuButton) - {MenuButton.OCR_DEBUG}
 
 
+def test_main_menu_can_launch_mini_app() -> None:
+    keyboard = main_menu_keyboard("https://meters.example.com/miniapp/")
+    dashboard = keyboard.keyboard[0][0]
+
+    assert dashboard.text == "📊 Открыть дашборд"
+    assert dashboard.web_app is not None
+    assert str(dashboard.web_app.url) == "https://meters.example.com/miniapp/"
+
+
 def test_reading_method_keyboard_offers_photo_and_manual_input() -> None:
     keyboard = reading_method_keyboard(str(ID))
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
